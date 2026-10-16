@@ -1272,3 +1272,12 @@ the cache name; activation removes only older flue-startup-* caches. Both
 new public routes are explicitly allowed through PageKite. Chrome preview
 verified immediate shell with an 8-second server delay, unavailable-server
 message and retry recovery. Actual iPhone launch behavior still needs testing.
+
+2026-10-17 dashboard sessions: dashboard_auth.c now keeps eight independent
+RAM session slots with per-session remember flags and last-use timestamps.
+Successful re-login rotates only the requesting session; a new client uses
+a free slot or evicts the least recently used one at capacity. Logout clears
+only the matching token. Password changes and initialization revoke all
+sessions. Credential NVS format is unchanged. The host auth regression
+exercises desktop/phone coexistence, independent cookie lifetimes/logout,
+re-login at capacity, LRU eviction and all-session revocation.

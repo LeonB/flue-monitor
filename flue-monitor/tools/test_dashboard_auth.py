@@ -59,6 +59,13 @@ static int httpd_req_get_hdr_value_str(httpd_req_t *r,const char *key,char *out,
 static int httpd_resp_set_hdr(httpd_req_t *r,const char *key,const char *value) {if(!strcmp(key,"Set-Cookie"))r->set_cookie=value;return ESP_OK;}
 '''
 tests = r'''
+static void save_cookie(const httpd_req_t *req, char out[80]) {
+ size_t n=strcspn(req->set_cookie,";");assert(n<80);memcpy(out,req->set_cookie,n);out[n]=0;
+}
+static bool any_session(void) {
+ for(size_t i=0;i<AUTH_MAX_SESSIONS;i++)if(s_sessions[i].token[0])return true;
+ return false;
+}
 int main(void) {
  httpd_req_t remote={.fd=1,.host="demo.pagekite.me",.origin="https://demo.pagekite.me"};
  httpd_req_t local={.fd=2,.host="192.168.1.137",.origin="http://192.168.1.137"};
@@ -73,7 +80,7 @@ int main(void) {
  assert(blob_size==48 && memmem(blob,blob_size,"test-password-123",17)==NULL);
  s_configured=false;memset(&s_credential,0,sizeof s_credential);dashboard_auth_init();assert(dashboard_auth_is_configured());
  assert(dashboard_auth_login(&remote,"test-password-123",false)==ESP_OK);assert(strstr(remote.set_cookie,"HttpOnly") && strstr(remote.set_cookie,"SameSite=Strict") && strstr(remote.set_cookie,"Secure"));
- char valid[80];snprintf(valid,sizeof valid,"flu_session=%s",s_session);remote.cookie=valid;assert(dashboard_auth_check(&remote));
+ char valid[80];save_cookie(&remote,valid);remote.cookie=valid;assert(dashboard_auth_check(&remote));
  char forged[128];snprintf(forged,sizeof forged,"x%s",valid);remote.cookie=forged;assert(!dashboard_auth_check(&remote));
  snprintf(forged,sizeof forged,"%sx",valid);remote.cookie=forged;assert(!dashboard_auth_check(&remote));
  snprintf(forged,sizeof forged,"other=abc; %s; extra=1",valid);remote.cookie=forged;assert(dashboard_auth_check(&remote));
@@ -86,26 +93,62 @@ int main(void) {
  assert(dashboard_auth_login(&remote,"test-password-123",false)==ESP_OK);
  fail_hash=true;assert(dashboard_auth_login(&remote,"test-password-123",false)==ESP_ERR_NOT_FOUND);fail_hash=false;
  assert(dashboard_auth_set_password("incorrect-password","next-password-123")==ESP_ERR_NOT_FOUND);
- assert(dashboard_auth_set_password("test-password-123","next-password-123")==ESP_OK);assert(!*s_session);
+ assert(dashboard_auth_set_password("test-password-123","next-password-123")==ESP_OK);assert(!any_session());
  assert(dashboard_auth_login(&local,"test-password-123",false)==ESP_ERR_NOT_FOUND);
  assert(dashboard_auth_login(&local,"next-password-123",false)==ESP_OK);assert(!strstr(local.set_cookie,"Secure"));
  char remembered[80];
  assert(dashboard_auth_login(&local,"next-password-123",true)==ESP_OK);
- snprintf(remembered,sizeof remembered,"flu_session=%s",s_session);local.cookie=remembered;
+ save_cookie(&local,remembered);local.cookie=remembered;
  now=1000LL*86400*1000000;assert(dashboard_auth_check(&local));
  assert(strstr(local.set_cookie,"Max-Age=34560000"));
  dashboard_auth_init();assert(!dashboard_auth_check(&local));
- assert(dashboard_auth_login(&local,"next-password-123",true)==ESP_OK);snprintf(remembered,sizeof remembered,"flu_session=%s",s_session);
+ assert(dashboard_auth_login(&local,"next-password-123",true)==ESP_OK);save_cookie(&local,remembered);
  assert(dashboard_auth_set_password("next-password-123","final-password-123")==ESP_OK);assert(!dashboard_auth_check(&local));
  assert(dashboard_auth_set_password("final-password-123","next-password-123")==ESP_OK);
  dashboard_auth_logout(&local);assert(!dashboard_auth_check(&local));now=0;
  assert(dashboard_auth_login(&local,"next-password-123",false)==ESP_OK);
  assert(!strstr(local.set_cookie,"Max-Age") && !strstr(local.set_cookie,"Expires"));
- now=86400LL*1000000;snprintf(remembered,sizeof remembered,"flu_session=%s",s_session);local.cookie=remembered;assert(dashboard_auth_check(&local));
+ now=86400LL*1000000;save_cookie(&local,remembered);local.cookie=remembered;assert(dashboard_auth_check(&local));
  now+=86400LL*1000000;assert(dashboard_auth_check(&local));
  local.cookie=NULL;assert(!dashboard_auth_check(&local));
  dashboard_auth_init();local.cookie=remembered;assert(!dashboard_auth_check(&local));now=0;
- local.cookie=s_session;dashboard_auth_logout(&local);assert(!*s_session && strstr(local.set_cookie,"Max-Age=0"));
+ dashboard_auth_logout(&local);assert(!any_session() && strstr(local.set_cookie,"Max-Age=0"));
+ // Independent desktop and phone sessions, including different remember flags.
+ local.cookie=NULL;remote.cookie=NULL;now=0;
+ assert(dashboard_auth_login(&local,"next-password-123",true)==ESP_OK);
+ char desktop[80],phone[80];save_cookie(&local,desktop);local.cookie=desktop;
+ assert(dashboard_auth_login(&remote,"next-password-123",false)==ESP_OK);
+ save_cookie(&remote,phone);remote.cookie=phone;
+ assert(strcmp(desktop,phone));assert(dashboard_auth_check(&local));
+ assert(strstr(local.set_cookie,"Max-Age=34560000"));
+ remote.set_cookie=NULL;assert(dashboard_auth_check(&remote));assert(remote.set_cookie==NULL);
+ // Re-login rotates the phone token without consuming another slot or logging out desktop.
+ assert(dashboard_auth_login(&remote,"next-password-123",false)==ESP_OK);
+ assert(!dashboard_auth_check(&remote));save_cookie(&remote,phone);assert(dashboard_auth_check(&remote));
+ assert(dashboard_auth_check(&local));
+ dashboard_auth_logout(&remote);assert(!dashboard_auth_check(&remote));assert(dashboard_auth_check(&local));
+ // Unknown logout must not clear a valid session.
+ remote.cookie="flu_session=invalid";dashboard_auth_logout(&remote);assert(dashboard_auth_check(&local));
+ // A password change and restart each revoke every session.
+ remote.cookie=NULL;assert(dashboard_auth_login(&remote,"next-password-123",true)==ESP_OK);save_cookie(&remote,phone);remote.cookie=phone;
+ assert(dashboard_auth_set_password("next-password-123","final-password-123")==ESP_OK);
+ assert(!dashboard_auth_check(&local) && !dashboard_auth_check(&remote));
+ assert(dashboard_auth_login(&local,"final-password-123",true)==ESP_OK);save_cookie(&local,desktop);
+ remote.cookie=NULL;assert(dashboard_auth_login(&remote,"final-password-123",false)==ESP_OK);save_cookie(&remote,phone);
+ dashboard_auth_init();assert(!dashboard_auth_check(&local) && !dashboard_auth_check(&remote));
+ // Bounded capacity evicts only the least recently used session.
+ char cookies[AUTH_MAX_SESSIONS+1][80];
+ for(size_t i=0;i<AUTH_MAX_SESSIONS;i++) {
+  now+=(int64_t)1000000;local.cookie=NULL;
+  assert(dashboard_auth_login(&local,"final-password-123",false)==ESP_OK);save_cookie(&local,cookies[i]);
+ }
+ now+=1000000;local.cookie=cookies[0];assert(dashboard_auth_check(&local));
+ now+=1000000;local.cookie=NULL;assert(dashboard_auth_login(&local,"final-password-123",false)==ESP_OK);save_cookie(&local,cookies[AUTH_MAX_SESSIONS]);
+ for(size_t i=0;i<=AUTH_MAX_SESSIONS;i++){local.cookie=cookies[i];assert(dashboard_auth_check(&local)==(i!=1));}
+ // Re-login at full capacity must not evict another browser.
+ local.cookie=cookies[0];assert(dashboard_auth_login(&local,"final-password-123",true)==ESP_OK);save_cookie(&local,cookies[0]);
+ for(size_t i=0;i<=AUTH_MAX_SESSIONS;i++){local.cookie=cookies[i];assert(dashboard_auth_check(&local)==(i!=1));}
+ puts("PASS independent desktop/phone sessions, per-session remember/logout, token rotation, password/restart revocation and bounded LRU eviction");
  puts("PASS password hashing/persistence, crypto/NVS failure, socket-based remote detection, cookie boundaries, browser-session versus persistent cookies, CSRF/HTTPS, lockout, password change and logout");
  return 0;
 }

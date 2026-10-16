@@ -133,11 +133,14 @@ LAN GET /api/settings remains available without credentials for flue-display;
 local commissioning saves are allowed only until the first password is set. The password is
 stored in NVS as a salted PBKDF2-HMAC-SHA-256 hash; the settings API never
 returns it. Change it in **Settings → Dashboard access**; the current
-password is required and the new password must be confirmed. One browser
-session is active at a time; without Keep me signed in it uses a browser-session cookie (no expiry date).
+password is required and the new password must be confirmed. Up to eight independent
+browser sessions can remain active, for example desktop, iPhone and curl.
+Signing out ends only the current session; when all eight slots are occupied,
+a new login replaces the least recently used session. Without Keep me signed
+in, each session uses a browser-session cookie (no expiry date).
 Browsers may preserve session cookies when restoring a previous session. Remembered sessions
 have no server time limit and end on monitor restart. Five failed sign-ins
-cause a 30-second lockout. Password changes invalidate the active session.
+cause a 30-second lockout. Password changes invalidate all sessions.
 Remote cookies are Secure and all remote state-changing requests require
 a matching HTTPS Origin. The custom HTTP CNAME redirects to the primary
 PageKite HTTPS dashboard for sign-in. The device WebSocket used by flue-display remains outside dashboard
