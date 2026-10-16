@@ -6,6 +6,28 @@ import sys
 
 root = Path(__file__).resolve().parents[1]
 assets = {
+    "startup_640x1136": root / "main/web_ui/startup-640x1136.png",
+    "startup_750x1334": root / "main/web_ui/startup-750x1334.png",
+    "startup_1242x2208": root / "main/web_ui/startup-1242x2208.png",
+    "startup_1125x2436": root / "main/web_ui/startup-1125x2436.png",
+    "startup_828x1792": root / "main/web_ui/startup-828x1792.png",
+    "startup_1242x2688": root / "main/web_ui/startup-1242x2688.png",
+    "startup_1170x2532": root / "main/web_ui/startup-1170x2532.png",
+    "startup_1179x2556": root / "main/web_ui/startup-1179x2556.png",
+    "startup_1206x2622": root / "main/web_ui/startup-1206x2622.png",
+    "startup_1284x2778": root / "main/web_ui/startup-1284x2778.png",
+    "startup_1290x2796": root / "main/web_ui/startup-1290x2796.png",
+    "startup_1320x2868": root / "main/web_ui/startup-1320x2868.png",
+    "startup_1260x2736": root / "main/web_ui/startup-1260x2736.png",
+    "startup_1080x2340": root / "main/web_ui/startup-1080x2340.png",
+
+    "stove_svg": root / "main/web_ui/flue-icon-stove.svg",
+    "favicon": root / "main/web_ui/favicon.ico",
+    "apple_icon": root / "main/web_ui/apple-touch-icon.png",
+    "icon_192": root / "main/web_ui/icon-192.png",
+    "icon_512": root / "main/web_ui/icon-512.png",
+    "manifest": root / "main/web_ui/site.webmanifest",
+
     "html": root / "main/web_ui/dashboard.html",
     "js": root / "main/web_ui/dashboard.js",
     "css": root / "main/web_ui/dashboard.css",

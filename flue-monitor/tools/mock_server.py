@@ -192,7 +192,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
 
+        if path == "/startup.png":
+            from urllib.parse import parse_qs
+            size = parse_qs(urlparse(self.path).query).get("size", [""])[0]
+            if size in ['640x1136', '750x1334', '1242x2208', '1125x2436', '828x1792', '1242x2688', '1170x2532', '1179x2556', '1206x2622', '1284x2778', '1290x2796', '1320x2868', '1260x2736', '1080x2340']:
+                self._file(WEB_UI_DIR, f"startup-{size}.png", "image/png")
+            else:
+                self.send_error(404)
+            return
+
         static = {
+            "/flue-icon-stove.svg": (WEB_UI_DIR, "flue-icon-stove.svg", "image/svg+xml"),
+            "/favicon.ico": (WEB_UI_DIR, "favicon.ico", "image/x-icon"),
+            "/apple-touch-icon.png": (WEB_UI_DIR, "apple-touch-icon.png", "image/png"),
+            "/icon-192.png": (WEB_UI_DIR, "icon-192.png", "image/png"),
+            "/icon-512.png": (WEB_UI_DIR, "icon-512.png", "image/png"),
+            "/site.webmanifest": (WEB_UI_DIR, "site.webmanifest", "application/manifest+json"),
+
             "/": (WEB_UI_DIR, "dashboard.html", "text/html"),
             "/burn-graph.js": (WEB_UI_DIR, "burn-graph.js", "application/javascript"),
             "/vendor/uplot.min.js": (WEB_UI_DIR, "vendor/uplot.min.js", "application/javascript"),

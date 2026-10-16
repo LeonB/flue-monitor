@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Flue Monitor</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/flue-icon-stove.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#f5ead8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flue Monitor">
+
 <!-- dashboard.css is byte-identical to ../../../components/captive_portal/styles.css
      (both copies of the same design system, kept as separate embedded files
      since ESP-IDF's EMBED_FILES collides on basename across components --
@@ -16,6 +24,33 @@
      than @font-face rules living in dashboard.css/styles.css) since the
      captive portal doesn't embed these font files and would otherwise 404
      on them. -->
+<link rel="apple-touch-startup-image" href="/startup.png?size=640x1136" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=750x1334" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1242x2208" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1125x2436" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=828x1792" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1242x2688" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1170x2532" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1179x2556" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1206x2622" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1284x2778" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1290x2796" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1320x2868" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1260x2736" media="(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<link rel="apple-touch-startup-image" href="/startup.png?size=1080x2340" media="(device-width: 360px) and (device-height: 780px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+<meta name="color-scheme" content="light">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<style>
+html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
+#startup{position:fixed;inset:0;z-index:100;background:#f5ead8;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center;font:17px/1.5 system-ui,sans-serif}
+#startup[hidden]{display:none}
+#startup h1{font:600 24px/1.2 system-ui,sans-serif;margin:24px 0 8px}
+#startup p{max-width:300px;color:#645c50;margin:0 0 20px}
+#startup a{color:#8c491a;text-underline-offset:4px;padding:12px}
+.startup-spinner{width:24px;height:24px;border:3px solid #d9c9b0;border-top-color:#8c491a;border-radius:50%;animation:startup-spin 1s linear infinite}
+@keyframes startup-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.startup-spinner{animation:none}}
+</style>
 <link rel="stylesheet" href="/dashboard.css">
 <link rel="stylesheet" href="/vendor/uplot.min.css">
 <style>
@@ -120,7 +155,27 @@
   .btn-save { background: var(--color-accent); color: var(--color-bg); font-size: 15px; }
 </style>
 </head>
-<body x-data="app()" x-init="init()">
+<body x-data="app()">
+<section id="startup" aria-labelledby="startup-title"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="96" height="96" aria-hidden="true" xmlns:c2pa="http://c2pa.org/manifest"><defs>
+<radialGradient id="fire" cx="0.5" cy="0.95" r="0.75" fx="0.5" fy="0.95"><stop offset="0" stop-color="#ffc6a5"></stop><stop offset="0.55" stop-color="#8c491a"></stop><stop offset="0.9" stop-color="#474238"></stop></radialGradient>
+<clipPath id="win"><rect x="128" y="143" width="256" height="195" rx="50"></rect></clipPath>
+<filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="22"></feGaussianBlur></filter>
+</defs>
+<rect width="96" height="96" aria-hidden="true" rx="115" fill="#f5ead8"></rect>
+<rect x="210" y="0" width="92" height="102" fill="#2e2b25"></rect>
+<rect x="82" y="92" width="348" height="317" rx="60" fill="#2e2b25"></rect>
+<path fill="#2e2b25" d="M113 405h46v18a23 23 0 0 1-46 0z"></path><path fill="#2e2b25" d="M353 405h46v18a23 23 0 0 1-46 0z"></path>
+<rect x="128" y="143" width="256" height="195" rx="50" fill="#8c491a" filter="url(#glow)" opacity="0.8"></rect>
+<g clip-path="url(#win)">
+<rect x="128" y="143" width="256" height="195" fill="url(#fire)"></rect>
+<path fill="#c67139" d="M174 288.1A38.5 79.1 0 0 1 251 288.1A38.5 33.9 0 0 1 174 288.1Z"></path><path fill="#c67139" d="M246 278.8A46 100.8 0 0 1 338 278.8A46 43.199999999999996 0 0 1 246 278.8Z"></path><path fill="#ffe1d0" d="M261 293.2A28 60.199999999999996 0 0 1 317 293.2A28 25.8 0 0 1 261 293.2Z"></path><path fill="#ffe1d0" d="M195 301.3A20.5 41.3 0 0 1 236 301.3A20.5 17.7 0 0 1 195 301.3Z"></path>
+</g>
+</svg><h1 id="startup-title">Flue Monitor</h1><p id="startup-message" role="status">Connecting to your stove…</p><span class="startup-spinner" aria-hidden="true"></span><a id="startup-retry" href="/" hidden>Try again</a></section>
+<script>
+window.flueStartupTimer=setTimeout(()=>{const message=document.getElementById('startup-message');if(message){message.textContent='Taking longer than usual. Check your connection and try again.';document.getElementById('startup-retry').hidden=false;}},15000);
+window.flueStartupDone=()=>{clearTimeout(window.flueStartupTimer);document.getElementById('startup')?.remove();};
+</script>
+
 
   <!-- ============ Dashboard ============ -->
   <template x-if="view === 'dashboard'">

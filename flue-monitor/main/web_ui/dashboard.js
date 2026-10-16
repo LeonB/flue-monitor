@@ -157,6 +157,7 @@ function app() {
     },
 
     async init() {
+      this.$nextTick(() => window.flueStartupDone?.());
       setInterval(() => this.fetchReading(), 5000);
       setInterval(() => this.fetchDeviceWifi(), 10000);
       requestAnimationFrame((t) => this.runGlowFrame(t));
