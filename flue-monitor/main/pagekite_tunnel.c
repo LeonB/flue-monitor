@@ -368,7 +368,8 @@ static const char *route(const char *method, const char *path) {
         "/api/auth/status",
         "/api/pagekite/status",
         "/favicon.ico", "/flue-icon-stove.svg", "/apple-touch-icon.png",
-        "/icon-192.png", "/icon-512.png", "/site.webmanifest", "/startup.png"
+        "/icon-192.png", "/icon-512.png", "/site.webmanifest", "/startup.png",
+        "/service-worker.js", "/loading.html"
     };
     if (!strcmp(path, "/api/settings")) return "/api/tunnel/settings";
     for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++)

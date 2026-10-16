@@ -3,7 +3,7 @@ const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:a
 const source = fs.readFileSync('main/rest_api.c', 'utf8').split('static const char login_page[] = ')[1].split('\n\nstatic esp_err_t auth_status_handler')[0];
 const html = [...source.matchAll(/"(?:[^"\\]|\\.)*"/g)].map(m => JSON.parse(m[0])).join('');
 assert.match(html, /type="password"/);
-const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]).find(script => script.includes("const form="));
 async function page(configured, remote = false) {
   const elements = Object.fromEntries(['p','c','intro','label','b','e','show','title','remember'].map(k => [k, { value: '', style: {}, textContent: '', disabled: k === 'b', checked:false, type:'password', setAttribute(name,value){this[name]=value} }]));
   const form = {}; let writes = [], redirects = [];

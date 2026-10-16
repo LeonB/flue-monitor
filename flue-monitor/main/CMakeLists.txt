@@ -16,6 +16,7 @@ add_custom_command(OUTPUT "${WEB_ASSET_HEADER}"
                            web_ui/apple-touch-icon.png
                            web_ui/icon-192.png
                            web_ui/icon-512.png
+                           web_ui/loading.html web_ui/service-worker.js
                            web_ui/site.webmanifest
                            web_ui/startup-640x1136.png
                            web_ui/startup-750x1334.png

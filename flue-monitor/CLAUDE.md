@@ -1260,3 +1260,15 @@ now flashed on both devices, including their new setup passwords. Monitor
 settings acknowledgement and display RSSI endpoints require dashboard login;
 no authenticated session is available, so end-to-end settings acknowledgement
 and physical display output remain unverified.
+
+2026-10-16 cached startup: HTTPS/localhost pages register /service-worker.js.
+The worker caches only the public, self-contained /loading.html connecting
+screen and serves it for root navigations. That screen fetches fresh root
+HTML with the current session cookie, then replaces its document with the
+live dashboard/sign-in page. API data and authenticated HTML are never put
+in Cache Storage. HTTP LAN origins keep the ordinary network startup. The
+asset generator substitutes a hash of the worker and loading screen into
+the cache name; activation removes only older flue-startup-* caches. Both
+new public routes are explicitly allowed through PageKite. Chrome preview
+verified immediate shell with an 8-second server delay, unavailable-server
+message and retry recovery. Actual iPhone launch behavior still needs testing.

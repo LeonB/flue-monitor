@@ -202,6 +202,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         static = {
+            "/service-worker.js": (WEB_UI_DIR, "service-worker.js", "application/javascript"),
+            "/loading.html": (WEB_UI_DIR, "loading.html", "text/html"),
             "/flue-icon-stove.svg": (WEB_UI_DIR, "flue-icon-stove.svg", "image/svg+xml"),
             "/favicon.ico": (WEB_UI_DIR, "favicon.ico", "image/x-icon"),
             "/apple-touch-icon.png": (WEB_UI_DIR, "apple-touch-icon.png", "image/png"),
