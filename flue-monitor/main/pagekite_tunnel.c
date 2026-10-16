@@ -366,7 +366,9 @@ static const char *route(const char *method, const char *path) {
         "/fonts/figtree-600.woff2", "/fonts/figtree-700.woff2",
         "/api/reading", "/api/history", "/api/events", "/api/devices/wifi", "/api/settings/status",
         "/api/auth/status",
-        "/api/pagekite/status"
+        "/api/pagekite/status",
+        "/favicon.ico", "/flue-icon-stove.svg", "/apple-touch-icon.png",
+        "/icon-192.png", "/icon-512.png", "/site.webmanifest", "/startup.png"
     };
     if (!strcmp(path, "/api/settings")) return "/api/tunnel/settings";
     for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++)
@@ -478,6 +480,11 @@ static void prepare(int i) {
     if (!have_host || (strcasecmp(request_host, domain) &&
         (!custom_domain || !*custom_domain || strcasecmp(request_host, custom_domain)))) {
         reject(i, 400, "Bad Request"); return;
+    }
+    // Only launch images need a query parameter; retain it after exact route validation.
+    if (query && !strcmp(path, "/startup.png")) {
+        *query = '?';
+        target = path;
     }
     char forwarded_auth[704] = "";
     if (have_cookie) snprintf(forwarded_auth + strlen(forwarded_auth), sizeof forwarded_auth - strlen(forwarded_auth), "Cookie: %s\r\n", cookie);
