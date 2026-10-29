@@ -32,3 +32,7 @@ void ws_server_broadcast_settings_changed(void);
 #ifdef __cplusplus
 }
 #endif
+
+// True only for a currently connected display advertising preview support.
+bool ws_server_panel_calibration_supported(void);
+bool ws_server_panel_calibration_applied(uint32_t revision);

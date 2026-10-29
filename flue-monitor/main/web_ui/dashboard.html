@@ -318,6 +318,13 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
         </button>
       </div>
       <h2 style="margin:0">Tuning</h2>
+      <div class="field-group">
+        <h6>Panel calibration</h6>
+        <div class="field-list" style="padding:16px">
+          <p>Compare a steady LED color with your screen and adjust the panel’s color balance.</p>
+          <button type="button" class="btn btn-secondary btn-block" @click="openCalibration()">Calibrate panel</button>
+        </div>
+      </div>
 
       <div class="field-group">
         <h6>The glow</h6>
@@ -549,6 +556,71 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
         <button type="button" @click="displaySyncError = ''" style="display:block;margin-top:8px;background:transparent;border:0;text-decoration:underline;font:inherit;cursor:pointer" aria-label="Dismiss display delivery warning">Dismiss</button>
       </div>
 
+    </div>
+  </template>
+
+  <template x-if="view === 'calibration'">
+    <div class="settings-screen">
+      <div class="topbar" style="padding:0">
+        <button type="button" class="btn btn-secondary" :disabled="calibrationBusy" @click="calibrationCommand('cancel')">Cancel &amp; return</button>
+      </div>
+      <h2>Panel calibration</h2>
+      <p>Keep the diffuser fitted. Use steady room lighting, set a fixed screen brightness, and turn off True Tone and Night Shift.</p>
+      <div style="position:sticky;top:8px;z-index:5;background:var(--color-bg);padding:8px 0;border-radius:24px">
+        <div aria-label="Screen reference color" :style="'height:120px;border-radius:24px;border:1px solid var(--color-neutral-300);background:'+calibration.color"></div>
+        <p class="text-muted" style="text-align:center;margin:4px 0 0">Screen reference · <span x-text="calibration.color"></span></p>
+      </div>
+      <fieldset :disabled="calibrationBusy" style="border:0;padding:0;margin:0;min-width:0">
+        <legend style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)">Calibration controls</legend>
+        <div class="field-group">
+          <h6>1 · Choose a reference</h6>
+          <div class="field-list" style="padding:16px">
+            <div style="display:flex;flex-wrap:wrap;gap:8px">
+              <template x-for="sample in calibrationColors" :key="sample.name">
+                <button type="button" class="btn btn-secondary" :aria-pressed="calibration.color===sample.color" @click="calibration.color=sample.color;calibrationChanged()" style="height:40px;padding:0 12px;gap:8px">
+                  <span :style="'width:16px;height:16px;border-radius:50%;border:1px solid #aaa;background:'+sample.color"></span><span x-text="sample.name"></span>
+                </button>
+              </template>
+            </div>
+            <label style="display:block;margin-top:16px">Custom color <input type="color" x-model="calibration.color" @change="calibrationChanged()" style="vertical-align:middle;margin-left:12px"></label>
+          </div>
+        </div>
+        <div class="field-group">
+          <h6>2 · Compare color conversion</h6>
+          <div class="field-list" style="padding:16px">
+            <label for="panel-mode">Conversion</label>
+            <select id="panel-mode" class="input" x-model="calibration.mode" @change="calibrationChanged()">
+              <option value="custom">Custom gamma</option><option value="srgb">Standard sRGB</option>
+            </select>
+            <div x-show="calibration.mode==='custom'">
+              <label for="panel-gamma" style="display:block;margin-top:16px">Gamma <span x-text="Number(calibration.gamma).toFixed(2)"></span></label>
+              <input id="panel-gamma" type="range" min="1" max="4" step="0.05" x-model.number="calibration.gamma" @change="calibrationChanged()" style="width:100%">
+              <p class="text-muted">Lower values strengthen mid-level channels; higher values suppress them. White and pure primaries keep their endpoints.</p>
+            </div>
+            <label for="panel-brightness" style="display:block;margin-top:16px">LED brightness <span x-text="calibration.brightness+' / 255'"></span></label>
+            <input id="panel-brightness" type="range" min="1" max="255" step="1" x-model.number="calibration.brightness" @change="calibrationChanged()" style="width:100%">
+            <p class="text-muted">The reference stays the selected color. LED brightness is separate; match hue before judging brightness.</p>
+          </div>
+        </div>
+        <div class="field-group">
+          <details class="field-list" style="padding:16px">
+            <summary style="cursor:pointer">Advanced · R/G/B balance <span x-show="calibration.red!==1 || calibration.green!==1 || calibration.blue!==1">(adjusted)</span></summary>
+            <p class="text-muted" style="margin-top:12px">Leave at 100% unless white has a color cast. These controls adjust channel strength separately from gamma.</p>
+            <template x-for="channel in ['red','green','blue']" :key="channel">
+              <div style="margin-bottom:16px">
+                <label :for="'panel-'+channel"><span x-text="channel[0].toUpperCase()+channel.slice(1)"></span> <span x-text="Math.round(calibration[channel]*100)+'%'"></span></label>
+                <input :id="'panel-'+channel" type="range" min="0.1" max="1" step="0.01" x-model.number="calibration[channel]" @change="calibrationChanged()" style="width:100%">
+              </div>
+            </template>
+            <button type="button" class="btn btn-secondary btn-block" @click="calibration.red=calibration.green=calibration.blue=1;calibrationChanged()">Reset channel balance</button>
+          </details>
+        </div>
+        <p class="text-muted">A test uses a steady color instead of temperature and stops after 3 minutes without an update. Sensor sampling and logging continue.</p>
+        <button type="button" class="btn btn-secondary btn-block" :disabled="!calibrationSupported" @click="calibrationCommand('preview')" x-text="calibrationActive?'Apply / restart test':'Start steady test'"></button>
+        <button type="button" class="btn btn-primary btn-block" style="margin-top:12px" :disabled="!calibrationSupported || !calibrationActive" @click="calibrationCommand('save')">Save panel correction &amp; finish</button>
+      </fieldset>
+      <p x-show="calibrationActive" class="text-muted" x-text="'Test ends in '+calibrationRemaining+' seconds'"></p>
+      <p role="status" aria-live="polite" :style="calibrationError?'color:#8c491a':''" x-text="calibrationMessage"></p>
     </div>
   </template>
 

@@ -48,8 +48,17 @@ EVENTS = [
 ]
 EVENT_LABEL = {e["slug"]: e["label"] for e in EVENTS}
 
+calibration = {"expires":0}
+
+def calibration_status():
+    remaining=max(0,int((calibration['expires']-time.monotonic())*1000))
+    return {"supported":os.environ.get('MOCK_CALIBRATION_SUPPORTED','true')=='true',
+            "active":remaining>0,"remaining_ms":remaining,"settings_revision":settings['settings_revision'],
+            "display_applied":os.environ.get('MOCK_DISPLAY_APPLIED','true')=='true'}
+
 settings = {
     "settings_revision": 1,
+    "panel_srgb":False,"panel_gamma":2.8,"panel_red_gain":1,"panel_green_gain":1,"panel_blue_gain":1,
     "pagekite_enabled": False,
     "pagekite_domain": "",
     "pagekite_custom_domain": "",
@@ -238,6 +247,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/calibration":
+            self._json(calibration_status())
+            return
+
         if path == "/api/settings/status":
             self._json({"settings_revision": settings["settings_revision"], "display_applied": os.environ.get("MOCK_DISPLAY_APPLIED", "true").lower() == "true"})
             return
@@ -276,6 +289,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = json.loads(body) if body else {}
         except json.JSONDecodeError:
             self._json({"error": "invalid JSON"}, 400)
+            return
+
+        if path == "/api/calibration":
+            action=data.get('action')
+            if action not in ('preview','save','cancel'):
+                self._json({'error':'Invalid action'},400)
+                return
+            if action!='cancel' and not calibration_status()['supported']:
+                self._json({'error':'Display calibration unavailable'},503)
+                return
+            if action=='preview':
+                calibration['expires']=time.monotonic()+180
+            else:
+                calibration['expires']=0
+            if action=='save':
+                settings['panel_srgb']=data['srgb']
+                settings['panel_gamma']=data.get('gamma',settings['panel_gamma'])
+                for channel in ('red','green','blue'):settings['panel_'+channel+'_gain']=data[channel]
+            settings['settings_revision']+=1
+            self._json(calibration_status())
             return
 
         if path == "/api/settings":

@@ -355,6 +355,7 @@ static const char *route(const char *method, const char *path) {
     if (!strcmp(method, "POST")) {
         if (!strcmp(path, "/api/settings")) return "/api/tunnel/settings";
         if (!strcmp(path, "/api/event")) return "/api/event";
+        if (!strcmp(path, "/api/calibration")) return path;
         if (!strcmp(path, "/api/auth/login") || !strcmp(path, "/api/auth/setup") ||
             !strcmp(path, "/api/auth/password") || !strcmp(path, "/api/auth/logout")) return path;
         return NULL;
@@ -365,7 +366,7 @@ static const char *route(const char *method, const char *path) {
         "/fonts/caprasimo-400.woff2", "/fonts/figtree-400.woff2",
         "/fonts/figtree-600.woff2", "/fonts/figtree-700.woff2",
         "/api/reading", "/api/history", "/api/events", "/api/devices/wifi", "/api/settings/status",
-        "/api/auth/status",
+        "/api/auth/status", "/api/calibration",
         "/api/pagekite/status",
         "/favicon.ico", "/flue-icon-stove.svg", "/apple-touch-icon.png",
         "/icon-192.png", "/icon-512.png", "/site.webmanifest", "/startup.png",

@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include "config.h"
+#include "../../components/panel_color.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -31,6 +32,16 @@ static float s_color_transition_exponent = COLOR_TRANSITION_EXPONENT;
 static float s_breathing_exponent = 1.0f;
 static uint32_t s_minimum_brightness = PULSE_BRIGHTNESS_MIN;
 static uint32_t s_maximum_brightness = PULSE_BRIGHTNESS_MAX;
+static bool s_panel_srgb;
+static float s_panel_gamma = 2.8f;
+static float s_panel_gains[3] = {1, 1, 1};
+static struct {
+  int64_t expires_us;
+  uint32_t color, brightness;
+  bool srgb;
+  float gains[3];
+  float gamma;
+} s_panel_preview;
 
 typedef struct {
   uint8_t r, g, b;
@@ -56,12 +67,8 @@ static float clampf(float v, float lo, float hi) {
 
 // Preserve fractional colour and brightness until the final 8-bit output.
 // Rounding once avoids the downward bias from three successive truncations.
-static uint8_t scaled_channel(uint8_t trough, uint8_t peak, float color_t, float brightness) {
-  // Screen-picked colours need perceptual correction for linear LED PWM.
-  // Correct hue channels before global pulse brightness, preserving its range.
-  float channel = lerpf((float) trough, (float) peak, color_t) / 255.0f;
-  float value = powf(clampf(channel, 0.0f, 1.0f), 2.8f) * brightness;
-  return (uint8_t) lroundf(clampf(value, 0.0f, 255.0f));
+static uint8_t scaled_channel(uint8_t trough, uint8_t peak, float color_t, float brightness, bool srgb, float gain, float gamma) {
+  return panel_color_channel(lerpf((float)trough, (float)peak, color_t), brightness, srgb, gain, gamma);
 }
 
 // Matches the sidecar's own "Thermocouple Zone" classification (see
@@ -153,6 +160,10 @@ static void render_task(void *arg) {
     uint32_t minimum_brightness, maximum_brightness;
     uint32_t idle_pulse_period_ms, fast_pulse_period_ms;
     rgb_t colors[3];
+    bool panel_srgb, preview;
+    float panel_gamma;
+    float gains[3];
+    uint32_t preview_color, preview_brightness;
     portENTER_CRITICAL(&s_threshold_lock);
     zone_cold_max_c = s_zone_cold_max_c;
     zone_optimal_max_c = s_zone_optimal_max_c;
@@ -165,6 +176,12 @@ static void render_task(void *arg) {
     minimum_brightness = s_minimum_brightness;
     maximum_brightness = s_maximum_brightness;
     for (int i = 0; i < 3; i++) colors[i] = s_zone_colors[i];
+    preview = s_panel_preview.expires_us > now_us;
+    panel_srgb = preview ? s_panel_preview.srgb : s_panel_srgb;
+    panel_gamma = preview ? s_panel_preview.gamma : s_panel_gamma;
+    for (int i = 0; i < 3; i++) gains[i] = preview ? s_panel_preview.gains[i] : s_panel_gains[i];
+    preview_color = s_panel_preview.color;
+    preview_brightness = s_panel_preview.brightness;
     portEXIT_CRITICAL(&s_threshold_lock);
 
     if (fabsf(rate_c_per_min) < rate_deadband_c_per_min) {
@@ -182,7 +199,12 @@ static void render_task(void *arg) {
     float breathing_envelope = powf(envelope, breathing_exponent);
     float brightness = lerpf((float) minimum_brightness, (float) maximum_brightness, breathing_envelope);
 
-    if (valid) {
+    if (preview) {
+      uint8_t r = panel_color_channel((preview_color >> 16) & 255, preview_brightness, panel_srgb, gains[0], panel_gamma);
+      uint8_t g = panel_color_channel((preview_color >> 8) & 255, preview_brightness, panel_srgb, gains[1], panel_gamma);
+      uint8_t b = panel_color_channel(preview_color & 255, preview_brightness, panel_srgb, gains[2], panel_gamma);
+      for (int i = 0; i < LED_COUNT; i++) led_strip_set_pixel(s_strip, i, r, g, b);
+    } else if (valid) {
       // The dim trough always shows the true current-zone color, so the
       // reading stays honestly readable at a glance; the bright peak swaps
       // to the pure neighboring zone's color in the trend direction. A
@@ -191,9 +213,9 @@ static void render_task(void *arg) {
       rgb_t trough_color = colors[temperature_to_zone(temperature_c, zone_cold_max_c, zone_optimal_max_c)];
       rgb_t peak_color = trend_neighbor_color(temperature_c, rate_c_per_min, zone_cold_max_c, zone_optimal_max_c, colors);
       float color_t = powf(envelope, color_transition_exponent);
-      uint8_t r = scaled_channel(trough_color.r, peak_color.r, color_t, brightness);
-      uint8_t g = scaled_channel(trough_color.g, peak_color.g, color_t, brightness);
-      uint8_t b = scaled_channel(trough_color.b, peak_color.b, color_t, brightness);
+      uint8_t r = scaled_channel(trough_color.r, peak_color.r, color_t, brightness, panel_srgb, gains[0], panel_gamma);
+      uint8_t g = scaled_channel(trough_color.g, peak_color.g, color_t, brightness, panel_srgb, gains[1], panel_gamma);
+      uint8_t b = scaled_channel(trough_color.b, peak_color.b, color_t, brightness, panel_srgb, gains[2], panel_gamma);
       for (int i = 0; i < LED_COUNT; i++) {
         led_strip_set_pixel(s_strip, i, r, g, b);
       }
@@ -295,5 +317,26 @@ void led_display_set_zone_colors(uint32_t cold, uint32_t optimal, uint32_t hot) 
   for (int i = 0; i < 3; i++) {
     s_zone_colors[i] = (rgb_t) {(packed[i] >> 16) & 255, (packed[i] >> 8) & 255, packed[i] & 255};
   }
+  portEXIT_CRITICAL(&s_threshold_lock);
+}
+
+void led_display_set_panel_correction(bool srgb, float red, float green, float blue, float gamma) {
+  portENTER_CRITICAL(&s_threshold_lock);
+  s_panel_srgb = srgb;
+  s_panel_gamma = gamma;
+  s_panel_gains[0] = red; s_panel_gains[1] = green; s_panel_gains[2] = blue;
+  portEXIT_CRITICAL(&s_threshold_lock);
+}
+
+void led_display_set_panel_preview(uint32_t remaining_ms, uint32_t color, uint32_t brightness,
+                                   bool srgb, float red, float green, float blue, float gamma) {
+  // Local monotonic expiry remains effective with monitor/network/phone gone.
+  if (remaining_ms > 180000) remaining_ms = 180000;
+  portENTER_CRITICAL(&s_threshold_lock);
+  s_panel_preview.expires_us = remaining_ms ? esp_timer_get_time() + (int64_t)remaining_ms * 1000 : 0;
+  s_panel_preview.color = color; s_panel_preview.brightness = brightness;
+  s_panel_preview.srgb = srgb;
+  s_panel_preview.gamma = gamma;
+  s_panel_preview.gains[0] = red; s_panel_preview.gains[1] = green; s_panel_preview.gains[2] = blue;
   portEXIT_CRITICAL(&s_threshold_lock);
 }

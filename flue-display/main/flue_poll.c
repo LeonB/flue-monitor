@@ -56,7 +56,7 @@ static const char *TAG = "flue_poll";
 
 #define HTTP_TIMEOUT_MS         5000
 #define URL_BUF_SIZE            64
-#define HTTP_RESPONSE_BUF_SIZE  1024  // must comfortably fit a settings response with a full webhook URL + secret
+#define HTTP_RESPONSE_BUF_SIZE  2048  // must comfortably fit a settings response with a full webhook URL + secret
 
 #define WS_MSG_BUF_SIZE  512
 
@@ -152,6 +152,51 @@ static bool parse_zone_color(const cJSON *item, uint32_t *out) {
   return true;
 }
 
+static bool apply_panel_settings(const cJSON *root) {
+  const char *keys[] = {"panel_red_gain", "panel_green_gain", "panel_blue_gain"};
+  float gains[3] = {1, 1, 1};
+  const cJSON *srgb = cJSON_GetObjectItemCaseSensitive(root, "panel_srgb");
+  if (srgb && !cJSON_IsBool(srgb)) return false;
+  for (int i = 0; i < 3; i++) {
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(root, keys[i]);
+    if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) || item->valuedouble < 0.1 || item->valuedouble > 1)) return false;
+    if (item) gains[i] = item->valuedouble;
+  }
+  const cJSON *gamma_item = cJSON_GetObjectItemCaseSensitive(root, "panel_gamma");
+  float gamma = 2.8f, preview_gamma = 2.8f;
+  if (gamma_item && (!cJSON_IsNumber(gamma_item) || !isfinite(gamma_item->valuedouble) || gamma_item->valuedouble < 1 || gamma_item->valuedouble > 4)) return false;
+  if (gamma_item) gamma = gamma_item->valuedouble;
+  const cJSON *preview = cJSON_GetObjectItemCaseSensitive(root, "panel_preview");
+  const cJSON *active = cJSON_GetObjectItemCaseSensitive(preview, "active");
+  if (preview && (!cJSON_IsObject(preview) || !cJSON_IsBool(active))) return false;
+  uint32_t color = 0, remaining_ms = 0, brightness = 0;
+  float preview_gains[3] = {1, 1, 1};
+  const cJSON *preview_srgb = cJSON_GetObjectItemCaseSensitive(preview, "srgb");
+  if (cJSON_IsTrue(active)) {
+    gamma_item = cJSON_GetObjectItemCaseSensitive(preview, "gamma");
+    if (gamma_item && (!cJSON_IsNumber(gamma_item) || !isfinite(gamma_item->valuedouble) || gamma_item->valuedouble < 1 || gamma_item->valuedouble > 4)) return false;
+    if (gamma_item) preview_gamma = gamma_item->valuedouble;
+    const cJSON *ttl = cJSON_GetObjectItemCaseSensitive(preview, "remaining_ms");
+    const cJSON *level = cJSON_GetObjectItemCaseSensitive(preview, "brightness");
+    if (!cJSON_IsNumber(ttl) || !isfinite(ttl->valuedouble) || ttl->valuedouble < 0 || ttl->valuedouble > 180000 ||
+        !cJSON_IsNumber(level) || !isfinite(level->valuedouble) || level->valuedouble < 1 || level->valuedouble > 255 ||
+        floor(level->valuedouble) != level->valuedouble || !cJSON_IsBool(preview_srgb) ||
+        !parse_zone_color(cJSON_GetObjectItemCaseSensitive(preview, "color"), &color)) return false;
+    const char *preview_keys[] = {"red", "green", "blue"};
+    for (int i = 0; i < 3; i++) {
+      const cJSON *item = cJSON_GetObjectItemCaseSensitive(preview, preview_keys[i]);
+      if (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) || item->valuedouble < 0.1 || item->valuedouble > 1) return false;
+      preview_gains[i] = item->valuedouble;
+    }
+    remaining_ms = (uint32_t)ttl->valuedouble;
+    brightness = (uint32_t)level->valuedouble;
+  }
+  led_display_set_panel_correction(cJSON_IsTrue(srgb), gains[0], gains[1], gains[2], gamma);
+  led_display_set_panel_preview(remaining_ms, color, brightness, cJSON_IsTrue(preview_srgb),
+                              preview_gains[0], preview_gains[1], preview_gains[2], preview_gamma);
+  return true;
+}
+
 static bool fetch_and_apply_settings(const esp_ip4_addr_t *ip) {
   char url[URL_BUF_SIZE];
   snprintf(url, sizeof(url), "http://" IPSTR "/api/settings", IP2STR(ip));
@@ -229,6 +274,12 @@ static bool fetch_and_apply_settings(const esp_ip4_addr_t *ip) {
     return false;
   }
 
+  if (!apply_panel_settings(root)) {
+    ESP_LOGW(TAG, "Rejected invalid panel calibration");
+    cJSON_Delete(root);
+    return false;
+  }
+
   ESP_LOGI(TAG,
            "Applying settings: zone_cold_max_c=%.1f zone_optimal_max_c=%.1f fast_rise_c_per_min=%.1f "
            "rate_deadband_c_per_min=%.1f idle_pulse_period_ms=%.0f fast_pulse_period_ms=%.0f "
@@ -255,8 +306,8 @@ static bool fetch_and_apply_settings(const esp_ip4_addr_t *ip) {
   if (cJSON_IsNumber(revision) && revision->valuedouble >= 1 && revision->valuedouble <= UINT32_MAX &&
       floor(revision->valuedouble) == revision->valuedouble && s_ws_client &&
       esp_websocket_client_is_connected(s_ws_client)) {
-    char ack[96];
-    int length = snprintf(ack, sizeof(ack), "{\"type\":\"settings_applied\",\"revision\":%.0f}", revision->valuedouble);
+    char ack[128];
+    int length = snprintf(ack, sizeof(ack), "{\"type\":\"settings_applied\",\"revision\":%.0f,\"panel_calibration\":true,\"panel_gamma\":true}", revision->valuedouble);
     acknowledged = esp_websocket_client_send_text(s_ws_client, ack, length, pdMS_TO_TICKS(1000)) == length;
     ESP_LOGI(TAG, "Settings revision %.0f applied, acknowledgement %s", revision->valuedouble,
              acknowledged ? "sent" : "failed");

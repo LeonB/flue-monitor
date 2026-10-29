@@ -36,6 +36,11 @@ void led_display_set_tuning(float zone_cold_max_c, float zone_optimal_max_c, flo
 // Updates the three zone colours (packed 0xRRGGBB). Thread-safe.
 void led_display_set_zone_colors(uint32_t cold, uint32_t optimal, uint32_t hot);
 
+// Saved correction and temporary preview are independent of sensor state.
+void led_display_set_panel_correction(bool srgb, float red, float green, float blue, float gamma);
+void led_display_set_panel_preview(uint32_t remaining_ms, uint32_t color, uint32_t brightness,
+                                   bool srgb, float red, float green, float blue, float gamma);
+
 #ifdef __cplusplus
 }
 #endif

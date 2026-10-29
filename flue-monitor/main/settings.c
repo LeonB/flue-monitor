@@ -39,6 +39,9 @@ static void set_defaults(settings_t *s) {
   s->breathing_exponent = DEFAULT_BREATHING_EXPONENT;
   s->minimum_brightness = DEFAULT_MINIMUM_BRIGHTNESS;
   s->maximum_brightness = DEFAULT_MAXIMUM_BRIGHTNESS;
+  s->panel_srgb = 0;
+  s->panel_gamma = 2.8f;
+  s->panel_red_gain = s->panel_green_gain = s->panel_blue_gain = 1.0f;
 }
 
 static bool valid_color(const char color[8]) {
@@ -78,6 +81,10 @@ static bool valid_pagekite(const pagekite_settings_t *p) {
 }
 
 static bool validate(const settings_t *s) {
+  if (!isfinite(s->panel_gamma) || s->panel_gamma < 1 || s->panel_gamma > 4) return false;
+  if (s->panel_srgb > 1 || !isfinite(s->panel_red_gain) || !isfinite(s->panel_green_gain) || !isfinite(s->panel_blue_gain) ||
+      s->panel_red_gain < 0.1f || s->panel_red_gain > 1 || s->panel_green_gain < 0.1f || s->panel_green_gain > 1 ||
+      s->panel_blue_gain < 0.1f || s->panel_blue_gain > 1) return false;
   if (!valid_pagekite(&s->pagekite)) return false;
   if (s->maximum_brightness > 255 || s->minimum_brightness > s->maximum_brightness) return false;
   if (!isfinite(s->breathing_exponent) || s->breathing_exponent < 0.3f || s->breathing_exponent > 3.0f) return false;
@@ -119,7 +126,7 @@ void settings_init(void) {
     // Earlier layouts are unchanged prefixes (before colours, shape, or
     // minimum brightness). Seed missing tail fields while retaining old values.
     if (nvs_get_blob(handle, NVS_KEY_BLOB, &from_nvs, &len) == ESP_OK &&
-        (len == sizeof(from_nvs) ||
+        (len == sizeof(from_nvs) || len == offsetof(settings_t, panel_srgb) || len == offsetof(settings_t, panel_gamma) ||
          len == offsetof(settings_t, pagekite) + offsetof(pagekite_settings_t, custom_domain) ||
          len == offsetof(settings_t, zone_cold_color) ||
          len == offsetof(settings_t, breathing_exponent) ||

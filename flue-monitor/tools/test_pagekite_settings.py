@@ -15,6 +15,7 @@ header = (root / 'main/settings.h').read_text().replace('#pragma once', '').repl
 config = (root / 'main/config.h').read_text().replace('#pragma once', '')
 settings = re.sub(r'^#include .*$','', (root / 'main/settings.c').read_text(), flags=re.M)
 api = (root / 'main/rest_api.c').read_text()
+calibration = api[api.index('// Preview state belongs'):api.index('static const httpd_uri_t panel_calibration_get_uri')]
 serialization = api[api.index('static void settings_to_json('):api.index('static const httpd_uri_t settings_get_uri')]
 post = api[api.index('static esp_err_t settings_post_handler('):api.index('static const httpd_uri_t settings_post_uri')]
 preamble = r'''
@@ -55,17 +56,24 @@ typedef struct {int content_len;void *user_ctx;const char *input;int received,st
 #define HTTPD_400_BAD_REQUEST 400
 #define HTTPD_403_FORBIDDEN 403
 #define HTTPD_500_INTERNAL_SERVER_ERROR 500
+static int httpd_resp_set_status(httpd_req_t *r,const char *status) {r->status=atoi(status);return ESP_OK;}
+static int64_t now_us = 1000000;
+static int64_t esp_timer_get_time(void) {return now_us;}
+static bool calibration_supported = true;
+static bool ws_server_panel_calibration_supported(void) {return calibration_supported;}
+static bool ws_server_panel_calibration_applied(uint32_t revision) {(void)revision;return true;}
+static int httpd_resp_set_hdr(httpd_req_t *r,const char *a,const char *b) {(void)r;(void)a;(void)b;return ESP_OK;}
 #define HTTPD_SOCK_ERR_TIMEOUT -2
 static int httpd_req_recv(httpd_req_t *r,char *out,int n) {memcpy(out,r->input+r->received,n);r->received+=n;return n;}
 static int httpd_resp_send_err(httpd_req_t *r,int status,const char *message) {r->status=status;snprintf(r->response,sizeof r->response,"%s",message);return ESP_OK;}
 static int httpd_resp_set_type(httpd_req_t *r,const char *type) {(void)r;(void)type;return ESP_OK;}
-static int httpd_resp_sendstr(httpd_req_t *r,const char *message) {r->status=200;snprintf(r->response,sizeof r->response,"%s",message);return ESP_OK;}
-static bool configured=true, authenticated=true;
+static int httpd_resp_sendstr(httpd_req_t *r,const char *message) {if(!r->status)r->status=200;snprintf(r->response,sizeof r->response,"%s",message);return ESP_OK;}
+static bool configured=true, authenticated=true, csrf_ok=true;
 static bool dashboard_auth_is_configured(void) {return configured;}
 static bool dashboard_auth_is_remote(httpd_req_t *r) {return r->user_ctx != NULL;}
 static bool dashboard_auth_check(httpd_req_t *r) {(void)r;return authenticated;}
 static bool auth_required(httpd_req_t *r) {if(authenticated)return false;r->status=401;return true;}
-static bool dashboard_auth_check_csrf(httpd_req_t *r) {(void)r;return true;}
+static bool dashboard_auth_check_csrf(httpd_req_t *r) {(void)r;return csrf_ok;}
 static double round_to(double a,double b) {return round(a/b)*b;}
 static uint32_t ws_server_settings_revision(bool advance) {static uint32_t revision=1;if(advance)revision++;return revision;}
 static void ws_server_broadcast_settings_changed(void) {}
@@ -129,12 +137,51 @@ int main(void) {
  configured=false;write_api(json,true,401);write_api(json,false,200);cJSON_Delete(json);
  puts("PASS authenticated settings enforcement, safe LAN display reads and local-only commissioning before enrollment");
  puts("PASS LAN/public credential redaction, blank/omitted secret retention, strict types/lengths, replacement, disabling and older clients");
+ // Existing full settings blob migrates with neutral correction.
+ set_defaults(&old);old.log_heartbeat_min=55;old.panel_srgb=1;old.panel_red_gain=0.75f;
+ memcpy(stored,&old,offsetof(settings_t,panel_gamma));stored_len=offsetof(settings_t,panel_gamma);
+ settings_init();settings_get(&current);assert(current.panel_srgb==1 && current.panel_red_gain==0.75f && current.panel_gamma==2.8f);
+ memcpy(stored,&old,offsetof(settings_t,panel_srgb));stored_len=offsetof(settings_t,panel_srgb);
+ settings_init();settings_get(&current);assert(current.log_heartbeat_min==55 && current.panel_red_gain==1 && current.panel_srgb==0);
+ authenticated=true;unsigned writes_before=writes;
+ const char *command="{\"action\":\"preview\",\"color\":\"#f3b54a\",\"brightness\":96,\"srgb\":true,\"red\":0.8,\"green\":1,\"blue\":0.9}";
+ httpd_req_t req={.input=command,.content_len=(int)strlen(command)};
+ panel_calibration_post_handler(&req);assert(req.status==200 && writes==writes_before);
+ cJSON *preview=panel_preview_json();assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(preview,"active")));cJSON_Delete(preview);
+ now_us+=181000000;preview=panel_preview_json();assert(!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(preview,"active")));cJSON_Delete(preview);
+ command="{\"action\":\"save\",\"gamma\":2.25,\"srgb\":true,\"red\":0.8,\"green\":1,\"blue\":0.9}";
+ req=(httpd_req_t){.input=command,.content_len=(int)strlen(command)};
+ panel_calibration_post_handler(&req);assert(req.status==200 && writes==writes_before+1);
+ settings_init();settings_get(&current);assert(current.panel_srgb==1 && current.panel_gamma==2.25f && fabsf(current.panel_red_gain-0.8f)<0.001f && current.log_heartbeat_min==55);
+ calibration_supported=false;req=(httpd_req_t){.input=command,.content_len=(int)strlen(command)};
+ panel_calibration_post_handler(&req);assert(req.status==503);
+ command="{\"action\":\"cancel\"}";req=(httpd_req_t){.input=command,.content_len=(int)strlen(command)};
+ panel_calibration_post_handler(&req);assert(req.status==200);
+ authenticated=false;req=(httpd_req_t){.input=command,.content_len=(int)strlen(command)};
+ panel_calibration_post_handler(&req);assert(req.status==401);
+ authenticated=true;calibration_supported=true;csrf_ok=false;
+ req=(httpd_req_t){.input=command,.content_len=(int)strlen(command)};panel_calibration_post_handler(&req);assert(req.status==403);csrf_ok=true;
+ unsigned unchanged=writes;
+ const char *bad_calibrations[]={
+  "{\"action\":\"save\",\"gamma\":4.1}",
+  "{\"action\":\"save\",\"gamma\":0}",
+  "{\"action\":\"save\",\"gamma\":\"2.8\"}",
+  "{\"action\":\"save\",\"srgb\":true,\"red\":0,\"green\":1,\"blue\":1}",
+  "{\"action\":\"preview\",\"srgb\":true,\"red\":1,\"green\":1,\"blue\":1,\"color\":\"#gg0000\",\"brightness\":96}",
+  "{\"action\":\"preview\",\"srgb\":true,\"red\":1,\"green\":1,\"blue\":1,\"color\":\"#ff0000\",\"brightness\":0}",
+  "{\"action\":\"preview\",\"srgb\":true,\"red\":1,\"green\":1,\"blue\":1,\"color\":\"#ff0000\",\"brightness\":96.5}"
+ };
+ for(size_t i=0;i<sizeof bad_calibrations/sizeof bad_calibrations[0];i++) {
+  req=(httpd_req_t){.input=bad_calibrations[i],.content_len=(int)strlen(bad_calibrations[i])};
+  panel_calibration_post_handler(&req);assert(req.status==400 && writes==unchanged && s_panel_preview.expires_us==0);
+ }
+ puts("PASS panel preview has no NVS writes, expires, requires capability/auth; saved correction survives old-blob migration and reload");
  return 0;
 }
 '''
 with tempfile.TemporaryDirectory() as directory:
     source = Path(directory) / 'settings_test.c'
     binary = Path(directory) / 'settings_test'
-    source.write_text(preamble + header + config + settings + serialization + post + tests)
+    source.write_text(preamble + header + config + settings + calibration + serialization + post + tests)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-Wno-deprecated-declarations', '-fsanitize=address,undefined', '-I', str(cjson), str(source), str(cjson / 'cJSON.c'), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True, timeout=20)

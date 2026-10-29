@@ -1329,3 +1329,76 @@ leaves 6% slot space. OTA to confirmed monitor .137 returned OK, rebooting.
 Public HTTPS /loading.html after reboot matches the corrected source byte
 for byte. iPhone home-screen appearance remains for owner verification;
 the changed loading source also changes the startup-worker cache version.
+
+
+2026-10-29 panel calibration: added authenticated/CSRF-protected GET/POST
+/api/calibration, allowed through the exact PageKite routes. Preview is RAM
+only, expires after 180 seconds since the last explicit adjustment, and is
+included only in the credential-free LAN device settings response. Display
+firmware receives the remaining TTL and independently expires the steady
+color using its own monotonic clock. Sensor ingestion/logging continue.
+Only Save persists panel_srgb and linear-light red/green/blue gains (0.1..1),
+as an appended settings_t tail. Older blobs/clients retain gamma 2.8 and
+unity gains, preserving existing appearance. Cancel/timeout restore the
+saved profile; saved zone colors and pulse parameters are independent.
+
+The shared components/panel_color.h implements legacy gamma 2.8 and the
+piecewise sRGB decoding curve, then channel gains and one brightness scale.
+The device settings response buffer is now 2048 bytes. Displays advertise
+panel_calibration:true in settings acknowledgements; the monitor tracks
+capability and applied revision on that connected descriptor, invalidating
+both by descriptor removal. Calibration confirmation uses its dedicated
+status, so a legacy settings ACK cannot confirm a preview. HTTP handler
+capacity is 48. The UI offers saved-zone/white/gray/primary/custom colors,
+constant test brightness, conversion choice and channel gains. Its reference
+stays visible while scrolling. Commands serialize; missing acknowledgement
+and request errors remain visible. Save/undo existing tuning edits before
+opening calibration. Closing the browser leaves only the bounded preview.
+
+Checks: actual settings/API code under ASan/UBSan covers old NVS prefix,
+preview without writes, expiry, cancel, persistence, capability/auth/CSRF and
+invalid values. Display host test executes actual parsing, setters and render
+branches for preview, expiry without network/sensor data, saved-profile
+fallback and invalid data. UI unit tests cover confirmation failures and
+preservation of drafts; Chromium at 390x844 checked start, conversion,
+swatch/gain changes, Save, reopen and Cancel with no page errors/overflow.
+PageKite forwarding, settings sync, compressed/versioned assets, login and
+RSSI capability-close tests pass. Monitor image 0x161ab0 has 6% slot free;
+display 0x10b2c0 has 29%, with production WS override empty. Physical color
+matching requires owner feedback during calibration.
+
+2026-10-29 deployment: display OTA to confirmed flue-display.local/.138
+returned OK, rebooting, followed by normal /status 404 at that address.
+Monitor OTA to confirmed .137 also returned OK, rebooting. Post-boot LAN
+settings retain every exposed previous value apart from boot revision;
+panel_srgb=false, all gains=1, panel_preview inactive/remaining_ms=0.
+Password configuration remains present. Public /api/calibration returns
+401 Unauthorized, verifying routing and session enforcement. Both devices
+are reachable; physical preview/colour comparison and authenticated
+end-to-end preview acknowledgement remain for the owner to initiate.
+
+
+2026-10-29 adjustable shared gamma: appended panel_gamma to settings_t,
+range 1..4, default 2.8. Both pre-calibration and first-calibration NVS
+layouts migrate with 2.8 while preserving all previous values. Omitted
+fields on ordinary settings writes and calibration saves retain saved gamma;
+legacy previews without gamma retain their original 2.8 interpretation.
+Preview payloads, saved profile and display rendering carry the shared
+exponent independently of linear R/G/B gains. Standard sRGB bypasses the
+custom exponent. Display capability acknowledgements now also advertise
+panel_gamma:true, required before the monitor confirms calibration support.
+
+The calibration UI exposes Custom gamma with a 1..4 / 0.05 slider and keeps
+R/G/B balance under a collapsed Advanced section, indicating adjusted gains.
+The gamma slider is hidden in sRGB mode. Host checks cover profile migration,
+persistence, gamma boundaries/invalid types, sRGB invariance, and actual
+preview render output for gamma 1 and 4. UI and mobile browser checks verify
+transmission/save of gamma 2.05 and the existing preview/cancel flow. Both
+firmware builds pass: monitor 0x161dd0 (6% slot free), display 0x10b480 (29%).
+
+Gamma-slider deployment: both OTA uploads (.138 display, .137 monitor)
+returned OK, rebooting. Display hostname resolves to .138 and responds with
+normal /status 404 after reboot. Monitor settings preserve every previous
+exposed saved value except boot revision; panel_gamma migrated to 2.8,
+preview inactive, and the public calibration route returns 401 without a
+session. The owner must log in again and judge gamma on a mixed test color.

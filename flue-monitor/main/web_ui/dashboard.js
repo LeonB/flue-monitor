@@ -35,6 +35,7 @@ const DISPLAY_SETTING_KEYS = [
   'rate_deadband_c_per_min', 'idle_pulse_period_ms', 'fast_pulse_period_ms',
   'color_transition_exponent', 'breathing_exponent', 'minimum_brightness', 'maximum_brightness',
   'zone_cold_color', 'zone_optimal_color', 'zone_hot_color',
+  'panel_srgb', 'panel_gamma', 'panel_red_gain', 'panel_green_gain', 'panel_blue_gain',
 ];
 
 // Colours are saved as #RRGGBB and shared with the physical LED ring.
@@ -122,6 +123,84 @@ function app() {
     glowOuterStyle: '',
     glowInnerStyle: '',
 
+    calibration: {color:'#ffffff', brightness:96, mode:'custom', gamma:2.8, red:1, green:1, blue:1},
+    calibrationBusy: false,
+    calibrationActive: false,
+    calibrationSupported: false,
+    calibrationUntil: 0,
+    calibrationRemaining: 0,
+    calibrationMessage: '',
+    calibrationError: false,
+    calibrationStatusPending: false,
+
+    get calibrationColors() {
+      return [
+        {name:'White',color:'#ffffff'}, {name:'Light gray',color:'#bcbcbc'}, {name:'Dark gray',color:'#595959'},
+        ...ZONE_ORDER.map(zone=>({name:zone[0].toUpperCase()+zone.slice(1),color:this.settings['zone_'+zone+'_color'] || DEFAULT_ZONE_COLORS[zone]})),
+        {name:'Red',color:'#ff0000'}, {name:'Green',color:'#00ff00'}, {name:'Blue',color:'#0000ff'},
+      ];
+    },
+
+    async openCalibration() {
+      if (this.changeCount) {this.showToast('Save or undo your tuning changes first');return;}
+      this.calibration = {color:'#ffffff', brightness:96, mode:this.settings.panel_srgb ? 'srgb':'custom', gamma:this.settings.panel_gamma ?? 2.8,
+        red:this.settings.panel_red_gain ?? 1, green:this.settings.panel_green_gain ?? 1, blue:this.settings.panel_blue_gain ?? 1};
+      this.calibrationActive=false;this.calibrationUntil=0;this.calibrationRemaining=0;
+      this.calibrationMessage='';this.calibrationError=false;this.calibrationSupported=false;
+      this.view='calibration';
+      await this.refreshCalibrationStatus();
+    },
+
+    async refreshCalibrationStatus() {
+      if (this.view!=='calibration' || this.calibrationBusy || this.calibrationStatusPending) return;
+      this.calibrationStatusPending=true;
+      try {
+        const res=await this.authorizedFetch('/api/calibration',{cache:'no-store',signal:AbortSignal.timeout(3000)});
+        if(!res.ok)throw new Error('Could not check display calibration support.');
+        const state=await res.json();
+        if(this.calibrationBusy)return;
+        this.calibrationSupported=state.supported===true;
+        this.calibrationActive=state.active===true;
+        this.calibrationUntil=Date.now()+(state.remaining_ms||0);
+        this.calibrationRemaining=Math.ceil((state.remaining_ms||0)/1000);
+        if(!this.calibrationSupported){this.calibrationMessage='The display is offline or needs calibration firmware.';this.calibrationError=true;}
+      } catch(e){this.calibrationError=true;this.calibrationMessage=e.message;}
+      finally{this.calibrationStatusPending=false;}
+    },
+
+    async calibrationCommand(action) {
+      if(this.calibrationBusy)return;
+      this.calibrationBusy=true;this.calibrationError=false;
+      this.calibrationMessage=action==='save'?'Saving panel correction…':'Waiting for the display…';
+      let accepted=false;
+      try {
+        const c=this.calibration;
+        const res=await this.authorizedFetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},
+          signal:AbortSignal.timeout(10000),body:JSON.stringify({action,color:c.color,brightness:Number(c.brightness),
+            srgb:c.mode==='srgb',gamma:Number(c.gamma),red:Number(c.red),green:Number(c.green),blue:Number(c.blue)})});
+        if(!res.ok){let error;try{error=(await res.json()).error}catch{}throw new Error(error||'Calibration request rejected.');}
+        const state=await res.json();accepted=true;
+        this.calibrationActive=state.active===true;
+        this.calibrationUntil=Date.now()+(state.remaining_ms||0);
+        this.calibrationRemaining=Math.ceil((state.remaining_ms||0)/1000);
+        if(action==='save')await this.fetchSettings();
+        const applied=await this.waitForDisplaySettings(state.settings_revision, '/api/calibration');
+        if(!applied)throw new Error(action==='save'?'Correction saved, but display delivery is unconfirmed.':
+          action==='cancel'?'Stop requested, but display delivery is unconfirmed. The test will expire automatically.':
+          'Preview requested, but the display has not confirmed it. The test will expire automatically.');
+        this.calibrationMessage=action==='preview'?'Display confirmed. Compare the panel with the reference color.':
+          action==='save'?'Panel correction saved and applied. Normal display resumed.':'Test stopped. Saved panel correction restored.';
+        if(action!=='preview'){this.view='settings';this.showToast(this.calibrationMessage);}
+      }catch(e){
+        this.calibrationError=true;
+        this.calibrationMessage=accepted?e.message:'No confirmation from the monitor. Any test still running will expire automatically. '+e.message;
+      }finally{this.calibrationBusy=false;}
+    },
+
+    async calibrationChanged() {
+      if(this.calibrationActive)await this.calibrationCommand('preview');
+    },
+
     get isStale() {
       // No real-time clock on the device, so this is "no reading fetched
       // in the last 90s" (3x the sensor's own ~30s cadence), not a true
@@ -158,6 +237,12 @@ function app() {
 
     async init() {
       this.$nextTick(() => window.flueStartupDone?.());
+      setInterval(()=>{
+        if(this.view!=='calibration')return;
+        this.calibrationRemaining=Math.max(0,Math.ceil((this.calibrationUntil-Date.now())/1000));
+        if(this.calibrationActive && this.calibrationRemaining===0){this.calibrationActive=false;this.calibrationMessage='Test expired. Normal display resumed.';}
+      },1000);
+      setInterval(()=>this.refreshCalibrationStatus(),5000);
       setInterval(() => this.fetchReading(), 5000);
       setInterval(() => this.fetchDeviceWifi(), 10000);
       requestAnimationFrame((t) => this.runGlowFrame(t));
@@ -456,12 +541,12 @@ function app() {
       this.displaySyncError = message;
     },
 
-    async waitForDisplaySettings(revision) {
+    async waitForDisplaySettings(revision, path = '/api/settings/status') {
       if (!Number.isInteger(revision)) return false;
       const deadline = Date.now() + 20000;
       while (Date.now() < deadline) {
         try {
-          const res = await this.authorizedFetch('/api/settings/status', { signal: AbortSignal.timeout(3000), cache: 'no-store' });
+          const res = await this.authorizedFetch(path, { signal: AbortSignal.timeout(3000), cache: 'no-store' });
           if (res.ok) {
             const status = await res.json();
             if (status.settings_revision !== revision) return false;
