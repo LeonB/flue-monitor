@@ -482,8 +482,9 @@ static void prepare(int i) {
         (!custom_domain || !*custom_domain || strcasecmp(request_host, custom_domain)))) {
         reject(i, 400, "Bad Request"); return;
     }
-    // Only launch images need a query parameter; retain it after exact route validation.
-    if (query && !strcmp(path, "/startup.png")) {
+    // Preserve static-asset version/size queries after exact route validation.
+    // API targets may be remapped (settings), so retain their existing behavior.
+    if (query && strncmp(path, "/api/", 5) && strcmp(path, "/")) {
         *query = '?';
         target = path;
     }

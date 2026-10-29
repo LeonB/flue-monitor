@@ -44,14 +44,19 @@
 <style>
 html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
 #startup{position:fixed;inset:0;z-index:100;background:#f5ead8;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center;font:17px/1.5 system-ui,sans-serif}
+#startup,#startup *{box-sizing:border-box}
 #startup[hidden]{display:none}
-#startup h1{font:600 24px/1.2 system-ui,sans-serif;margin:24px 0 8px}
+#startup h1{font:600 24px/1.2 system-ui,sans-serif;letter-spacing:normal;margin:24px 0 8px}
 #startup p{max-width:300px;color:#645c50;margin:0 0 20px}
 #startup a{color:#8c491a;text-underline-offset:4px;padding:12px}
 .startup-spinner{width:24px;height:24px;border:3px solid #d9c9b0;border-top-color:#8c491a;border-radius:50%;animation:startup-spin 1s linear infinite}
 @keyframes startup-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.startup-spinner{animation:none}}
 </style>
+<link rel="preload" href="/fonts/caprasimo-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/figtree-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/figtree-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/figtree-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css">
 <link rel="stylesheet" href="/vendor/uplot.min.css">
 <style>
@@ -174,7 +179,19 @@ html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
 </svg><h1 id="startup-title">Flue Monitor</h1><p id="startup-message" role="status">Connecting to your stove…</p><span class="startup-spinner" aria-hidden="true"></span><a id="startup-retry" href="/" hidden>Try again</a></section>
 <script>
 window.flueStartupTimer=setTimeout(()=>{const message=document.getElementById('startup-message');if(message){message.textContent='Taking longer than usual. Check your connection and try again.';document.getElementById('startup-retry').hidden=false;}},15000);
-window.flueStartupDone=()=>{clearTimeout(window.flueStartupTimer);document.getElementById('startup')?.remove();};
+// Start all required faces explicitly: Alpine's hidden templates may not yet
+// trigger font discovery. Reveal after readiness, or after at most two seconds.
+window.flueFontsReady=new Promise(resolve=>{
+  const timer=setTimeout(resolve,2000);
+  const faces=document.fonts ? Promise.all([
+    document.fonts.load('400 24px Caprasimo'),
+    document.fonts.load('400 16px Figtree'),
+    document.fonts.load('600 16px Figtree'),
+    document.fonts.load('700 16px Figtree')
+  ]) : Promise.resolve();
+  faces.catch(()=>{}).then(()=>{clearTimeout(timer);resolve();});
+});
+window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window.flueStartupTimer);document.getElementById('startup')?.remove();};
 </script>
 
 
