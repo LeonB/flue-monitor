@@ -447,7 +447,6 @@ static esp_err_t wifi_get_handler(httpd_req_t *req) {
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
   httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   httpd_resp_sendstr(req, json);
   free(json);
   return ESP_OK;
@@ -486,136 +485,11 @@ static const httpd_uri_t devices_wifi_get_uri = {
     .uri = "/api/devices/wifi", .method = HTTP_GET, .handler = devices_wifi_get_handler,
 };
 
-// Preview state belongs to the single HTTP worker, never to NVS.
-static struct {
-  int64_t expires_us;
-  char color[8];
-  double brightness, red, green, blue, gamma;
-  bool srgb;
-} s_panel_preview;
-
-static bool panel_json_number(const cJSON *root, const char *key, double min, double max, double *out) {
-  const cJSON *item = cJSON_GetObjectItemCaseSensitive(root, key);
-  if (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) || item->valuedouble < min || item->valuedouble > max) return false;
-  *out = item->valuedouble;
-  return true;
-}
-
-static cJSON *panel_preview_json(void) {
-  cJSON *obj = cJSON_CreateObject();
-  int64_t remaining = s_panel_preview.expires_us - esp_timer_get_time();
-  bool active = remaining > 0;
-  cJSON_AddBoolToObject(obj, "active", active);
-  cJSON_AddNumberToObject(obj, "remaining_ms", active ? remaining / 1000 : 0);
-  if (active) {
-    cJSON_AddStringToObject(obj, "color", s_panel_preview.color);
-    cJSON_AddNumberToObject(obj, "brightness", s_panel_preview.brightness);
-    cJSON_AddBoolToObject(obj, "srgb", s_panel_preview.srgb);
-    cJSON_AddNumberToObject(obj, "gamma", s_panel_preview.gamma);
-    cJSON_AddNumberToObject(obj, "red", s_panel_preview.red);
-    cJSON_AddNumberToObject(obj, "green", s_panel_preview.green);
-    cJSON_AddNumberToObject(obj, "blue", s_panel_preview.blue);
-  }
-  return obj;
-}
-
-static esp_err_t panel_calibration_get_handler(httpd_req_t *req) {
-  if (auth_required(req)) return ESP_FAIL;
-  cJSON *root = panel_preview_json();
-  uint32_t revision = ws_server_settings_revision(false);
-  cJSON_AddNumberToObject(root, "settings_revision", revision);
-  cJSON_AddBoolToObject(root, "supported", ws_server_panel_calibration_supported());
-  cJSON_AddBoolToObject(root, "display_applied", ws_server_panel_calibration_applied(revision));
-  char *json = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  esp_err_t err = httpd_resp_sendstr(req, json);
-  free(json);
-  return err;
-}
-
-static esp_err_t panel_calibration_post_handler(httpd_req_t *req) {
-  if (auth_required(req)) return ESP_FAIL;
-  if (!dashboard_auth_check_csrf(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Invalid request origin");
-  if (req->content_len <= 0 || req->content_len >= 512)
-    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid calibration body");
-  char body[512];
-  int received = 0;
-  while (received < req->content_len) {
-    int n = httpd_req_recv(req, body + received, req->content_len - received);
-    if (n <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete calibration body");
-    received += n;
-  }
-  body[received] = 0;
-  cJSON *root = cJSON_Parse(body);
-  const cJSON *action = cJSON_GetObjectItemCaseSensitive(root, "action");
-  bool cancel = cJSON_IsString(action) && !strcmp(action->valuestring, "cancel");
-  bool save = cJSON_IsString(action) && !strcmp(action->valuestring, "save");
-  bool preview = cJSON_IsString(action) && !strcmp(action->valuestring, "preview");
-  if (!cancel && !save && !preview) goto invalid;
-  if (!cancel && !ws_server_panel_calibration_supported()) {
-    cJSON_Delete(root);
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_set_status(req, "503 Service Unavailable");
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"error\":\"Connect a display with calibration support first\"}");
-  }
-  double red = 1, green = 1, blue = 1, brightness = 0, gamma = 2.8;
-  if (!cancel && cJSON_GetObjectItemCaseSensitive(root, "gamma") && !panel_json_number(root, "gamma", 1, 4, &gamma)) goto invalid;
-  const cJSON *srgb = cJSON_GetObjectItemCaseSensitive(root, "srgb");
-  if (!cancel && (!cJSON_IsBool(srgb) || !panel_json_number(root, "red", 0.1, 1, &red) ||
-      !panel_json_number(root, "green", 0.1, 1, &green) || !panel_json_number(root, "blue", 0.1, 1, &blue))) goto invalid;
-  if (preview) {
-    const cJSON *color = cJSON_GetObjectItemCaseSensitive(root, "color");
-    if (!cJSON_IsString(color) || strlen(color->valuestring) != 7 || color->valuestring[0] != '#' ||
-        !panel_json_number(root, "brightness", 1, 255, &brightness) || floor(brightness) != brightness) goto invalid;
-    for (int i = 1; i < 7; i++) if (!isxdigit((unsigned char)color->valuestring[i])) goto invalid;
-    strcpy(s_panel_preview.color, color->valuestring);
-    s_panel_preview.brightness = brightness;
-    s_panel_preview.red = red; s_panel_preview.green = green; s_panel_preview.blue = blue;
-    s_panel_preview.srgb = cJSON_IsTrue(srgb);
-    s_panel_preview.gamma = gamma;
-    s_panel_preview.expires_us = esp_timer_get_time() + 180000000;
-  } else if (save) {
-    settings_t settings;
-    settings_get(&settings);
-    settings.panel_srgb = cJSON_IsTrue(srgb);
-    if (cJSON_GetObjectItemCaseSensitive(root, "gamma")) settings.panel_gamma = gamma;
-    settings.panel_red_gain = red; settings.panel_green_gain = green; settings.panel_blue_gain = blue;
-    if (settings_set(&settings) != ESP_OK) {
-      cJSON_Delete(root);
-      return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not save panel correction");
-    }
-    s_panel_preview.expires_us = 0;
-  } else {
-    s_panel_preview.expires_us = 0;
-  }
-  cJSON_Delete(root);
-  ws_server_settings_revision(true);
-  ws_server_broadcast_settings_changed();
-  return panel_calibration_get_handler(req);
-invalid:
-  cJSON_Delete(root);
-  return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid panel calibration values");
-}
-static const httpd_uri_t panel_calibration_get_uri = {
-    .uri = "/api/calibration", .method = HTTP_GET, .handler = panel_calibration_get_handler,
-};
-static const httpd_uri_t panel_calibration_post_uri = {
-    .uri = "/api/calibration", .method = HTTP_POST, .handler = panel_calibration_post_handler,
-};
-
 static void settings_to_json(const settings_t *s, cJSON *root) {
   cJSON_AddBoolToObject(root, "pagekite_enabled", s->pagekite.enabled);
   cJSON_AddStringToObject(root, "pagekite_domain", s->pagekite.domain);
   cJSON_AddStringToObject(root, "pagekite_custom_domain", s->pagekite.custom_domain);
   cJSON_AddBoolToObject(root, "pagekite_secret_set", *s->pagekite.secret != 0);
-  cJSON_AddBoolToObject(root, "panel_srgb", s->panel_srgb);
-  cJSON_AddNumberToObject(root, "panel_gamma", s->panel_gamma);
-  cJSON_AddNumberToObject(root, "panel_red_gain", s->panel_red_gain);
-  cJSON_AddNumberToObject(root, "panel_green_gain", s->panel_green_gain);
-  cJSON_AddNumberToObject(root, "panel_blue_gain", s->panel_blue_gain);
   cJSON_AddNumberToObject(root, "settings_revision", ws_server_settings_revision(false));
   cJSON_AddNumberToObject(root, "log_heartbeat_min", s->log_heartbeat_min);
   cJSON_AddNumberToObject(root, "zone_cold_max_c", round_to(s->zone_cold_max_c, 0.1));
@@ -644,7 +518,6 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
 
   cJSON *root = cJSON_CreateObject();
   settings_to_json(&s, root);
-  if (device_settings) cJSON_AddItemToObject(root, "panel_preview", panel_preview_json());
   if (req->user_ctx || device_settings) {
     cJSON_DeleteItemFromObject(root, "google_sheets_secret");
     cJSON_DeleteItemFromObject(root, "google_sheets_webhook_url");
@@ -654,7 +527,6 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
   httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   httpd_resp_sendstr(req, json);
   free(json);
   return ESP_OK;
@@ -762,24 +634,6 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
 
   // Older API clients omit colours: retain those already saved. Explicit
   // values must be exactly #RRGGBB; never truncate invalid input into validity.
-  s.panel_gamma = current.panel_gamma;
-  item = cJSON_GetObjectItemCaseSensitive(root, "panel_gamma");
-  if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) || item->valuedouble < 1 || item->valuedouble > 4)) goto invalid_pagekite;
-  if (item) s.panel_gamma = item->valuedouble;
-  s.panel_srgb = current.panel_srgb;
-  s.panel_red_gain = current.panel_red_gain;
-  s.panel_green_gain = current.panel_green_gain;
-  s.panel_blue_gain = current.panel_blue_gain;
-  item = cJSON_GetObjectItemCaseSensitive(root, "panel_srgb");
-  if (item && !cJSON_IsBool(item)) goto invalid_pagekite;
-  if (item) s.panel_srgb = cJSON_IsTrue(item);
-  const char *gain_keys[] = {"panel_red_gain", "panel_green_gain", "panel_blue_gain"};
-  float *gains[] = {&s.panel_red_gain, &s.panel_green_gain, &s.panel_blue_gain};
-  for (int i = 0; i < 3; i++) {
-    item = cJSON_GetObjectItemCaseSensitive(root, gain_keys[i]);
-    if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) || item->valuedouble < 0.1 || item->valuedouble > 1)) goto invalid_pagekite;
-    if (item) *gains[i] = item->valuedouble;
-  }
   s.pagekite = current.pagekite;
   item = cJSON_GetObjectItemCaseSensitive(root, "pagekite_enabled");
   if (item && !cJSON_IsBool(item)) goto invalid_pagekite;
@@ -945,7 +799,6 @@ static esp_err_t events_get_handler(httpd_req_t *req) {
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
   httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   httpd_resp_sendstr(req, json);
   free(json);
   return ESP_OK;
@@ -1071,7 +924,6 @@ static esp_err_t history_get_handler(httpd_req_t *req) {
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
   httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   httpd_resp_sendstr(req, json);
   free(json);
   return ESP_OK;
@@ -1139,7 +991,7 @@ httpd_handle_t rest_api_start(void) {
   // must cover every endpoint on this server" section for how this was
   // caught: ws_server_register(), always the last one registered, is the
   // one that fails once the ceiling is hit).
-  config.max_uri_handlers = 48;
+  config.max_uri_handlers = 40;
   config.max_open_sockets = REST_API_MAX_OPEN_SOCKETS;
   config.lru_purge_enable = true;
   config.keep_alive_enable = true;
@@ -1160,8 +1012,6 @@ httpd_handle_t rest_api_start(void) {
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &wifi_get_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &devices_wifi_get_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_get_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &panel_calibration_get_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &panel_calibration_post_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &tunnel_settings_get_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_status_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &pagekite_status_uri));

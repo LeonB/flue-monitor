@@ -22,9 +22,9 @@ code = '''
 typedef void *httpd_handle_t;
 #define portMAX_DELAY 0
 #define ESP_LOGI(...) ((void)0)
-static int s_clients_mutex=1, s_display_wifi_fd=-1, s_display_wifi_rssi, s_panel_calibration_fd=-1;
+static int s_clients_mutex=1, s_display_wifi_fd=-1, s_display_wifi_rssi;
 static int s_client_count, s_client_fds[8];
-static uint32_t s_client_generations[8], s_panel_applied_revision;
+static uint32_t s_client_generations[8];
 static int64_t s_display_wifi_us, now_us;
 static void xSemaphoreTake(int mutex, int timeout) {}
 static void xSemaphoreGive(int mutex) {}
@@ -33,8 +33,6 @@ static int close(int fd) { return 0; }
 '''
 code += function('void ws_server_session_close(') + '\n'
 code += function('bool ws_server_display_wifi(') + '\n'
-code += function('bool ws_server_panel_calibration_supported(') + '\n'
-code += function('bool ws_server_panel_calibration_applied(') + '\n'
 code += '''
 int main(void) {
     int rssi=99;
@@ -42,10 +40,6 @@ int main(void) {
     assert(!ws_server_display_wifi(&rssi));
     s_clients_mutex=1;
     assert(!ws_server_display_wifi(&rssi));
-    assert(!ws_server_panel_calibration_supported());
-    s_panel_calibration_fd=4;assert(ws_server_panel_calibration_supported());
-    s_panel_applied_revision=7;
-    assert(ws_server_panel_calibration_applied(7));assert(!ws_server_panel_calibration_applied(8));
     s_display_wifi_fd=4; s_display_wifi_rssi=-62; s_display_wifi_us=1000000;
     now_us=1000001;
     assert(ws_server_display_wifi(&rssi) && rssi==-62);
@@ -55,8 +49,6 @@ int main(void) {
     ws_server_session_close(0,5);
     assert(ws_server_display_wifi(&rssi));
     ws_server_session_close(0,4);
-    assert(!ws_server_panel_calibration_supported());
-    assert(!ws_server_panel_calibration_applied(7));
     assert(!ws_server_display_wifi(&rssi));
     // Reusing the same descriptor without a new report must remain offline.
     assert(!ws_server_display_wifi(&rssi));

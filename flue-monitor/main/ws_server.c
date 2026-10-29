@@ -27,8 +27,6 @@ static SemaphoreHandle_t s_clients_mutex;
 static uint32_t s_settings_revision;
 static uint32_t s_applied_revision;
 static int s_display_wifi_fd = -1;
-static int s_panel_calibration_fd = -1;
-static uint32_t s_panel_applied_revision;
 static int s_display_wifi_rssi;
 static int64_t s_display_wifi_us;
 
@@ -69,7 +67,6 @@ void ws_server_session_close(httpd_handle_t server, int fd) {
   if (s_clients_mutex) {
     xSemaphoreTake(s_clients_mutex, portMAX_DELAY);
     if (s_display_wifi_fd == fd) s_display_wifi_fd = -1;
-    if (s_panel_calibration_fd == fd) s_panel_calibration_fd = -1;
     for (int i = 0; i < s_client_count; i++) {
       if (s_client_fds[i] == fd) {
         s_client_fds[i] = s_client_fds[--s_client_count];
@@ -94,22 +91,6 @@ uint32_t ws_server_settings_revision(bool advance) {
 bool ws_server_settings_applied(uint32_t revision) {
   xSemaphoreTake(s_clients_mutex, portMAX_DELAY);
   bool applied = revision == s_applied_revision;
-  xSemaphoreGive(s_clients_mutex);
-  return applied;
-}
-
-bool ws_server_panel_calibration_supported(void) {
-  if (!s_clients_mutex) return false;
-  xSemaphoreTake(s_clients_mutex, portMAX_DELAY);
-  bool supported = s_panel_calibration_fd >= 0;
-  xSemaphoreGive(s_clients_mutex);
-  return supported;
-}
-
-bool ws_server_panel_calibration_applied(uint32_t revision) {
-  if (!s_clients_mutex) return false;
-  xSemaphoreTake(s_clients_mutex, portMAX_DELAY);
-  bool applied = s_panel_calibration_fd >= 0 && s_panel_applied_revision == revision;
   xSemaphoreGive(s_clients_mutex);
   return applied;
 }
@@ -274,14 +255,7 @@ static esp_err_t ws_handler(httpd_req_t *req) {
       if (cJSON_IsString(type) && strcmp(type->valuestring, "settings_applied") == 0 &&
           cJSON_IsNumber(revision) && revision->valuedouble >= 1 && revision->valuedouble <= UINT32_MAX) {
         xSemaphoreTake(s_clients_mutex, portMAX_DELAY);
-        if (revision->valuedouble == s_settings_revision) {
-          s_applied_revision = s_settings_revision;
-          if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "panel_calibration")) &&
-              cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "panel_gamma"))) {
-            s_panel_calibration_fd = httpd_req_to_sockfd(req);
-            s_panel_applied_revision = s_settings_revision;
-          }
-        }
+        if (revision->valuedouble == s_settings_revision) s_applied_revision = s_settings_revision;
         xSemaphoreGive(s_clients_mutex);
         ESP_LOGI(TAG, "Display applied settings revision %lu", (unsigned long) s_applied_revision);
       }

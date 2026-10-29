@@ -49,9 +49,6 @@ typedef struct {
   uint32_t maximum_brightness; // 0..255, must be >= minimum
   uint32_t minimum_brightness; // 0..255, LED channel floor
   pagekite_settings_t pagekite; // append only, migrates the previous NVS layout
-  uint32_t panel_srgb; // 0: custom gamma, 1: standard sRGB decoding
-  float panel_red_gain, panel_green_gain, panel_blue_gain; // linear-light gains 0.1..1
-  float panel_gamma; // shared exponent 1..4; defaults to legacy 2.8
 } settings_t;
 
 // Loads settings from NVS, seeding config.h's compile-time defaults if NVS
