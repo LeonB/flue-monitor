@@ -571,7 +571,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
     return ESP_FAIL;
   }
 
-  char *body = calloc(req->content_len + 1, 1);
+  char *body = buffer_memory_calloc(req->content_len + 1, 1);
   if (!body) {
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
     return ESP_FAIL;

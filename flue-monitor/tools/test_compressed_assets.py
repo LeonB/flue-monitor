@@ -33,13 +33,15 @@ with tempfile.TemporaryDirectory() as directory:
     if len(sys.argv) < 2:
         sys.exit(0)
     reference = Path(sys.argv[1]).resolve()
+    (tmp / 'sdkconfig.h').write_text('')
+    (tmp / 'esp_log.h').write_text('#define ESP_LOGE(...) ((void)0)\n')
     (tmp / 'esp_heap_caps.h').write_text('''#pragma once
 #include <stddef.h>
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
 #define MALLOC_CAP_INTERNAL 4
-void *heap_caps_malloc_prefer(size_t, size_t, ...);
-void *heap_caps_calloc_prefer(size_t, size_t, size_t, ...);
+void *heap_caps_malloc(size_t,unsigned);
+void *heap_caps_calloc(size_t,size_t,unsigned);
 ''')
     (tmp / 'miniz.h').write_text('#define MINIZ_HEADER_FILE_ONLY\n#include "' + str(reference) + '"\n')
     (tmp / 'esp_http_server.h').write_text('''#pragma once
@@ -64,20 +66,20 @@ int httpd_resp_send_chunk(httpd_req_t *, const char *, size_t);
 #include <string.h>
 #include <stdarg.h>
 #include "esp_heap_caps.h"
-static unsigned preferred_allocations, internal_fallbacks;
-void *heap_caps_malloc_prefer(size_t size,size_t count,...) {
- va_list args;va_start(args,count);assert(count==2);
- assert(va_arg(args,int)==(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
- assert(va_arg(args,int)==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));va_end(args);
- preferred_allocations++;
+static unsigned buffer_allocations;
+void *heap_caps_malloc(size_t size,unsigned caps) {
+#if CONFIG_SPIRAM
+ assert(caps==(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+#else
+ assert(caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
+#endif
+ buffer_allocations++;
  if(getenv("FAIL_ALLOC"))return NULL;
- if(getenv("NO_PSRAM"))internal_fallbacks++;
+ if(CONFIG_SPIRAM && getenv("NO_PSRAM"))return NULL;
  return malloc(size);
 }
-void *heap_caps_calloc_prefer(size_t count,size_t size,size_t choices,...) {
- assert(choices==2);
- void *p=heap_caps_malloc_prefer(count*size,choices,
-   MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+void *heap_caps_calloc(size_t count,size_t size,unsigned caps) {
+ void *p=heap_caps_malloc(count*size,caps);
  if(p)memset(p,0,count*size);return p;
 }
 int httpd_req_get_hdr_value_str(httpd_req_t *r,const char *n,char *v,size_t z) {
@@ -99,13 +101,12 @@ int main(int argc,char **argv) {
  unsigned char *b=malloc(n); assert(fread(b,1,n,f)==n); fclose(f);
  r.fail=argc>3;
  int result=compressed_asset_send_identity(&r,b,n,strtoul(argv[2],NULL,10));free(b);
- if(n>=18)assert(preferred_allocations==2);
- if(getenv("NO_PSRAM"))assert(internal_fallbacks==2);
+ if(n>=18)assert(buffer_allocations==2);
  return result==0 ? 0 : 1;
 }
 ''')
     executable = tmp / 'decode'
-    subprocess.run(['cc', '-w', '-DMINIZ_NO_ARCHIVE_APIS', '-DMINIZ_NO_STDIO', '-DMINIZ_NO_ZLIB_APIS', '-I'+str(tmp), '-I'+str(portal / 'include'), str(portal / 'compressed_assets.c'), str(tmp / 'harness.c'), str(reference), '-o', str(executable)], check=True)
+    subprocess.run(['cc', '-w', '-DCONFIG_SPIRAM=1', '-DMINIZ_NO_ARCHIVE_APIS', '-DMINIZ_NO_STDIO', '-DMINIZ_NO_ZLIB_APIS', '-I'+str(tmp), '-I'+str(portal / 'include'), str(portal / 'compressed_assets.c'), str(tmp / 'harness.c'), str(reference), '-o', str(executable)], check=True)
     for source in assets:
         raw = source.read_bytes()
         encoded = tmp / 'input.gz'
@@ -114,11 +115,15 @@ int main(int argc,char **argv) {
         assert result.returncode == 0 and result.stdout == raw, source
         import os
         fallback = subprocess.run([str(executable), str(encoded), str(len(raw))], capture_output=True, env={**os.environ, 'NO_PSRAM': '1'})
-        assert fallback.returncode == 0 and fallback.stdout == raw, source
+        assert fallback.returncode != 0 and not fallback.stdout, source
         exhausted = subprocess.run([str(executable), str(encoded), str(len(raw))], capture_output=True, env={**os.environ, 'FAIL_ALLOC': '1'})
         assert exhausted.returncode != 0, source
         failure = subprocess.run([str(executable), str(encoded), str(len(raw)), 'disconnect'], capture_output=True)
         assert failure.returncode != 0, source
+    # Same shared allocator must work on the display, which has no PSRAM.
+    subprocess.run(['cc', '-w', '-DCONFIG_SPIRAM=0', '-DMINIZ_NO_ARCHIVE_APIS', '-DMINIZ_NO_STDIO', '-DMINIZ_NO_ZLIB_APIS', '-I'+str(tmp), '-I'+str(portal / 'include'), str(portal / 'compressed_assets.c'), str(tmp / 'harness.c'), str(reference), '-o', str(executable)], check=True)
+    result = subprocess.run([str(executable), str(encoded), str(len(raw))], capture_output=True, env={**os.environ, 'NO_PSRAM':'1'})
+    assert result.returncode == 0 and result.stdout == raw
     encoded.write_bytes(b'bad header')
     assert subprocess.run([str(executable), str(encoded), '1'], capture_output=True).returncode != 0
-    print('PASS: actual C fallback, multi-chunk byte equality, encoding negotiation, disconnect and invalid-header handling')
+    print('PASS: actual C decoding, strict monitor PSRAM, internal-only display, multi-chunk byte equality, encoding negotiation, disconnect and invalid-header handling')

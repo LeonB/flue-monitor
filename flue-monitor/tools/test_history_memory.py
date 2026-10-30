@@ -15,13 +15,15 @@ sensors_header = (root / 'main/sensors.h').read_text().replace('#pragma once', '
 events = api[api.index('#define EVENT_LOG_CAPACITY'):api.index('static void event_log_push')]
 with tempfile.TemporaryDirectory() as directory:
     tmp = Path(directory)
+    (tmp / 'sdkconfig.h').write_text('#define CONFIG_SPIRAM 1\n')
+    (tmp / 'esp_log.h').write_text('#define ESP_LOGE(...) ((void)0)\n')
     (tmp / 'esp_heap_caps.h').write_text('''#pragma once
 #include <stddef.h>
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_INTERNAL 2
 #define MALLOC_CAP_8BIT 4
-void *heap_caps_malloc_prefer(size_t, size_t, ...);
-void *heap_caps_calloc_prefer(size_t, size_t, size_t, ...);
+void *heap_caps_malloc(size_t, unsigned);
+void *heap_caps_calloc(size_t, size_t, unsigned);
 ''')
     preamble = r'''
 #include <assert.h>
@@ -39,10 +41,8 @@ typedef int esp_err_t;
 #define ESP_OK 0
 static size_t live, allocations;
 static bool fail_alloc, denied;
-void *heap_caps_malloc_prefer(size_t size,size_t choices,...) {
- va_list a;va_start(a,choices);assert(choices==2);
- assert(va_arg(a,int)==(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
- assert(va_arg(a,int)==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));va_end(a);
+void *heap_caps_malloc(size_t size,unsigned caps) {
+ assert(caps==(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
  if(fail_alloc)return NULL;
  void *p=malloc(size);assert(p);live++;allocations++;return p;
 }

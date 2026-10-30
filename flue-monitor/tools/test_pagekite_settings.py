@@ -45,6 +45,8 @@ typedef int SemaphoreHandle_t;
 static unsigned char stored[4096];
 static size_t stored_len;
 static unsigned writes, wakes;
+static bool fail_body_alloc;
+static void *buffer_memory_calloc(size_t n,size_t size) {return fail_body_alloc ? NULL : calloc(n,size);}
 static int xSemaphoreCreateMutex(void) {return 1;}
 static void xSemaphoreTake(int a,int b) {(void)a;(void)b;}
 static void xSemaphoreGive(int a) {(void)a;}
@@ -82,6 +84,7 @@ static void write_api(cJSON *body,bool remote,int status) {
  assert(!strstr(request.response,"test-private-secret"));free(text);
 }
 int main(void) {
+ fail_body_alloc=true;httpd_req_t oom={.content_len=2,.input="{}"};assert(settings_post_handler(&oom)==ESP_FAIL && oom.status==500 && !oom.received && !writes);fail_body_alloc=false;
  (void)TAG;(void)esp_err_to_name;
  settings_t old;set_defaults(&old);old.log_heartbeat_min=60;strcpy(old.zone_cold_color,"#fab100");
  memcpy(stored,&old,offsetof(settings_t,pagekite));stored_len=offsetof(settings_t,pagekite);

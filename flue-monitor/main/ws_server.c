@@ -1,4 +1,5 @@
 #include "ws_server.h"
+#include "buffer_memory.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -157,7 +158,7 @@ static void send_work_cb(void *arg) {
 }
 
 static void broadcast_raw(const char *json) {
-  if (s_server == NULL) {
+  if (s_server == NULL || json == NULL) {
     return;
   }
 
@@ -171,12 +172,14 @@ static void broadcast_raw(const char *json) {
   xSemaphoreGive(s_clients_mutex);
 
   for (int i = 0; i < count; i++) {
-    send_work_t *work = malloc(sizeof(send_work_t));
+    send_work_t *work = buffer_memory_alloc(sizeof(send_work_t));
     if (!work) continue;
     work->fd = fds[i];
     work->generation = generations[i];
-    work->payload = strdup(json);
+    size_t payload_size = strlen(json) + 1;
+    work->payload = buffer_memory_alloc(payload_size);
     if (!work->payload) { free(work); continue; }
+    memcpy(work->payload, json, payload_size);
     if (httpd_queue_work(s_server, send_work_cb, work) != ESP_OK) {
       ESP_LOGW(TAG, "httpd_queue_work failed for fd=%d, dropping this broadcast for it", fds[i]);
       free(work->payload);
