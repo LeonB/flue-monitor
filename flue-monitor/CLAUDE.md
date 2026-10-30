@@ -1,5 +1,156 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-10-31 six-task stack telemetry deployed
+
+Owner requested adding actual stack measurements. stack_diagnostics registers
+the long-lived main/sensor/Sheets/Bosch/PageKite/HTTP task handles; main scans
+uxTaskGetStackHighWaterMark every10s outside critical sections. No extra task or
+FreeRTOS trace facility. HTTP registers through its own queued callback; failed
+diagnostic registration only logs, never aborts boot. PageKite registers after
+startup allocation succeeds, so a deleted failed worker cannot leave a handle.
+Registered tasks must remain alive until reboot; unregister before introducing
+any future task deletion. Explicit sizes are shared with creation sites; all
+stack sizes stay unchanged. Unknown/unmeasured slots are omitted.
+
+memory.stacks contains size_bytes/min_free_bytes/peak_used_estimate_bytes per
+task. ESP-IDF high-water marks are bytes; peak use is estimated from untouched
+fill bytes and resets each reboot. It does not prove worst-case usage. OTA's
+last HTTP peak cannot survive its reboot without a separate pre-reset capture.
+Current JSONL recorder automatically retains the nested fields. Heartbeat
+updated to track them and distinguish both planned OTA resets.
+
+ASan/UBSan host test_stack_diagnostics.py executes actual implementation with
+real cJSON/task shims: byte arithmetic, lifetime minima, absent/invalid slots,
+zero headroom, scanning outside locks, failed JSON allocation and2048-byte WS
+frame budget pass. PageKite routing/queue regression passes. Build0x175e80
+(1531520 bytes,4480 OTA headroom); SHA256
+6bca784e6445002c48f41f67aa7dc56df997916bafbd3e8034c78af36e96775e.
+OTA to confirmed .137/MAC8c:94:df:0b:be:fc returned OK, rebooting. First recorded
+stack sample23:23:17UTC uptime20/reset_reason3 (planned OTA) includes all6 tasks;
+both PSRAM-only flags/light sleep remain true, PageKite and real43.7C working.
+LAN/public auth endpoints200 and dashboard password retained. Initial minimum
+free stacks: main632, sensor2064, Sheets10880, Bosch4204, PageKite5720, HTTP5040
+bytes. Sheets had not uploaded yet in that sample; do not trim based on it.
+Main is already much tighter than other tasks. Keep measuring normal/error/
+reconnect/login paths before any stack reduction. No stack sizes reduced.
+At uptime60s, one real Sheets upload succeeded; minimum free Sheets7136 bytes,
+PageKite4488, sensor2048, Bosch4204, HTTP5040 and main632. Both strict PSRAM
+flags remain true, internal minimum119360. Verified deployment event recorded
+with the six-task snapshot. Existing recorder continues through11:05UTC.
+
+## 2026-10-31 full PSRAM-only firmware deployed
+
+Owner explicitly authorized deploying during the twelve-hour capture, superseding
+the earlier no-deployment constraint. Normal sdkconfig AND sdkconfig.defaults
+now select MBEDTLS_CUSTOM_MEM_ALLOC; all application buffers, PageKite and
+Mbed TLS/PSA use strict PSRAM allocations without internal fallback. No services
+disabled; PSRAM2MiB, automatic light sleep and800ms IWDT remain enabled.
+Memory telemetry now exposes buffer_psram_only and tls_psram_only.
+
+Official6.0.3 build0x175af0 (1530608 bytes,5392 bytes OTA headroom), SHA256
+ed49a89fcd474567bc23c111f178b2f5514ed7b2c03605e6380055f47dcb4a85.
+OTA sent23:13:34UTC to confirmed monitor .137/MAC8c:94:df:0b:be:fc;
+full upload returned OK, rebooting. First new WS sample23:14:12UTC uptime20,
+reset_reason3 (planned software reset), both strict flags=true, PageKite
+connected and real45.4C thermocouple. LAN/public auth status succeed and saved
+dashboard password remains configured. This verifies deployment, not a soak.
+First internal minimum99756 versus1124 before deploy; early sampled largest
+block98304 versus49152 previously. Different boot ages/workloads; await actual
+cloud/Sheets activity before drawing memory or stability conclusions.
+
+Postboot uptime50–70s confirms one real Sheets attempt/completion/success,
+PageKite connected and both strict flags true. Internal free about139kB,
+minimum96504 bytes, largest110592, sampled largest minimum94208. PSRAM free
+2047532/minimum1981012. LAN/public auth endpoints200; public identity loading
+asset200/5170 bytes verifies PSRAM-backed inflation through the tunnel. This
+is a short smoke test, not long-term stability proof. Bosch's authenticated
+room-temperature status was not read; no owner session/credentials accessed.
+deployments.jsonl includes planned_ota_verified with the successful telemetry.
+
+Recorder continues in /tmp/flue-watch-12h through11:05UTC, deployments.jsonl
+marks planned OTA and first new sample. Heartbeat prompt updated to distinguish
+this intentional reset and compare pre/post firmware separately. Prior snapshots
+under /tmp/flue-psram-candidates remain available. No credentials/settings erased.
+
+## 2026-10-31 all application buffer allocators made strict, NOT flashed
+
+Owner requested the other allocators follow the same no-internal-fallback
+policy. Shared buffer_memory now uses SPIRAM|8BIT exclusively when CONFIG_SPIRAM
+is enabled; absent/full PSRAM returns NULL and logs an allocation failure.
+Builds without PSRAM (display) explicitly allocate INTERNAL|8BIT instead. This
+is a build-time hardware policy, not a runtime fallback. History, cJSON hooks,
+Bosch payloads/tokens/forms and asset inflation therefore become strict too.
+Settings POST bodies and WS queued work/payload copies also use buffer_memory;
+WS drops NULL JSON safely and frees partial allocations/failed queues.
+Internal diagnostic overrides and SDK/task/driver allocations remain separate.
+This supersedes the earlier paragraph saying the other buffer policy is unchanged.
+
+Sanitizer history tests verify full data/cleanup, exhausted-copy503 and auth;
+settings tests cover failed-body500 before receiving/writing data; WS tests
+cover both allocation failures, payload ownership, queue/send failure, stale
+sessions and NULL JSON. Actual asset decoder tests cover strict monitor PSRAM
+failure with no internal fallback and internal-only display success. Bosch
+protocol/lifecycle regressions also pass. Normal monitor6.0.3 build0x175a60
+(5536 bytes OTA headroom); TLS variant0x175ab0 (5456 bytes). Display5.5.5 builds.
+Snapshots: /tmp/flue-psram-candidates/application-buffers.{bin,elf}; latest TLS
+variant remains tls-build/flue-monitor.bin. No hardware deployment or measured
+RAM savings yet. Twelve-hour recorder/automation remains on existing firmware.
+
+## 2026-10-31 PSRAM candidates built, NOT flashed
+
+Owner approved moving PageKite buffers first and preparing TLS separately.
+PageKite now allocates its4097-byte scratch buffer, stream table and queued
+requests through psram_buffer (PSRAM only, per owner correction). Growth uses
+allocate/copy/free instead of plain realloc, retains bytes/NUL and the old
+allocation on failure. Startup frees partial allocations and reports failure.
+Do not use sizeof(response_buffer) now that it is a pointer.
+
+tls_memory_init runs first in app_main. Normal CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC
+is unchanged; only CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC enables the boot-lifetime
+PSRAM-only Mbed TLS/PSA hooks. Failed allocations are logged and never use
+internal RAM. This changes all allocations
+using these hooks, not only record buffers. No runtime hook switching.
+Owner explicitly rejected internal fallback for these network buffers. Existing
+history/JSON/assets/Bosch buffer policy is unchanged; only PageKite and the TLS
+candidate use the strict helper. Task stacks, DMA, Wi-Fi and drivers stay internal.
+
+ASan/UBSan PageKite routing/frame/queue tests pass, including failed request
+growth and data retention. TLS host tests cover both config modes, hook failure,
+strict PSRAM capability selection and logged exhaustion with heap/platform
+shims, even while internal RAM remains available. Actual TF-PSA
+credential/relay/DDNS known-vector test also passes. These are not hardware TLS
+or stability tests. Both official6.0.3 builds pass and fit unchanged OTA slots:
+PageKite-only0x1758d0 (5936 bytes free). TLS candidate rebuilt with the same
+strict PSRAM policy; see /tmp/flue-psram-candidates/tls-strict-build.log for size.
+Snapshots: /tmp/flue-psram-candidates/pagekite.{bin,elf,sdkconfig}; TLS config
+tls.sdkconfig and tls-build/{flue-monitor.bin,flue-monitor.elf} in same folder.
+The config diff consists only of internal→custom TLS allocator selection.
+README documents separate config/build usage. Normal sdkconfig stays internal.
+
+Neither candidate flashed, so actual RAM savings and hardware stability remain
+unmeasured. Preserve the owner's twelve-hour existing-firmware capture through
+2026-10-31 11:05UTC; recorder /tmp/flue-watch-12h/recorder.cjs and automation
+flue-monitor-twaalf-uur-bewaken remain active. Do not silently deploy during it.
+
+## 2026-10-31 reported outage, watchdog not yet confirmed
+
+Owner reported monitor/webpage unreachable and explicitly confirmed interrupting
+power before this inspection. Live WS at 2026-10-30 23:00:10 UTC showed IDF6.0.3,
+uptime139s, reset_reason1 (POWERON), PSRAM2MiB and automatic light sleep enabled.
+This explains the latest boot but cannot diagnose the pre-power-cycle outage.
+Subsequent samples uptime169/179/189s remained on the same boot; LAN and public
+root both returned303 (expected login redirect). PageKite connected, real flue
+readings49C, three Sheets attempts/completions/successes.
+Internal allocator minimum fell8400→1124 bytes; sampled largest-block minimum
+6400 and Sheets sampled free minimum8368. Current free recovered to about99kB.
+This is evidence of substantial transient memory pressure, not proof of its
+cause or a watchdog. Bosch and Sheets have separate HTTP/TLS workers; active
+sdkconfig keeps TLS internal with16KiB RX/4KiB TX and dynamic buffers disabled.
+Concurrent TLS is an investigation lead, not a demonstrated cause. No firmware
+or settings changed. Evidence: /tmp/flue-watchdog-20261031.jsonl. Monitor USB
+CH9102 was absent; do not treat the other available USB board as the monitor.
+Earlier30min IDF6.0.3 soak does not establish long-term stability.
+
 ## 2026-10-30 owner verification of final login flow
 
 User confirms retained-startup + real /login navigation works on the iPhone
