@@ -1,5 +1,28 @@
 # flue-display (plain ESP-IDF, not ESPHome)
 
+## 2026-10-30 receive buffer and connection recovery
+
+Monitor memory telemetry increased live reading frames to569 bytes, exceeding
+this display's former511-byte payload capacity. Receive buffer is now2048;
+oversized or noncontiguous frames are rejected instead of parsed truncated.
+The settings task rediscovers mDNS after60s of observed continuous settings/
+WS failures, stops the client outside its callback, changes URI, and restarts.
+HTTP settings share the fresh IP. Failed DNS leaves existing retries intact.
+Healthy sync clears the failure timer; repeated discovery is rate limited.
+Clean server CLOSE now also reconnects. This supersedes the historical
+resolve-only-once description below. Test URI builds never rediscover production.
+Host test tools/test_reconnect.py exercises actual callback/recovery functions
+under ASan/UBSan. Build passed with test URI empty (0x10aee0 bytes).
+OTA to confirmed .138/MAC84:0d:8e:d2:a6:ec was interrupted when USB and
+network disappeared. After owner reconnected, USB write to confirmed active
+0x1a0000 completed with hash verified; NVS/partition table/bootloader retained.
+Boot confirms ELF743afc6c5, WebSocket connected, settings revision2842811537
+acknowledged, and real24.2C reading received and handed to the LED renderer.
+Serial evidence: /tmp/flue-display-fixed-serial.log. Buffer recovery verified
+on hardware; changed-IP/mDNS failures tested with host stubs, not by changing
+the home network. Physical LED appearance remains for owner verification.
+
+
 The ambient light display device -- see the repo root `CLAUDE.md` for the
 bigger-picture project this is one half of, and `README.md` (in this folder)
 for day-to-day build/flash commands and hardware pinout.

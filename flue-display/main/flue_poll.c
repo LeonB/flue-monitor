@@ -58,7 +58,8 @@ static const char *TAG = "flue_poll";
 #define URL_BUF_SIZE            64
 #define HTTP_RESPONSE_BUF_SIZE  1024  // must comfortably fit a settings response with a full webhook URL + secret
 
-#define WS_MSG_BUF_SIZE  512
+#define WS_MSG_BUF_SIZE  2048  // includes monitor memory telemetry and future fields
+#define REDISCOVER_AFTER_US  (60LL * 1000000)
 
 static char s_response_buf[HTTP_RESPONSE_BUF_SIZE];
 static int s_response_len;
@@ -81,6 +82,8 @@ static int s_ws_msg_len = 0;
 
 static SemaphoreHandle_t s_refetch_settings_sem;
 static esp_websocket_client_handle_t s_ws_client;
+// Owned by settings_task; keep the handle stable for event/reporting tasks.
+static bool s_ws_started;
 
 static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
   // Body data reaches this callback already de-chunked by the underlying
@@ -115,7 +118,8 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
 // section. mdns_query_a() itself is also somewhat flaky poll-to-poll on
 // this network (weak/variable RSSI observed, plausibly lossy multicast),
 // so this is only called once at boot to get an initial address -- not on
-// every reconnect, unlike the reading itself the address rarely changes on
+// every transient reconnect; prolonged failures trigger fresh discovery.
+// Unlike the reading itself the address rarely changes on
 // a home network, and the WS client's own auto-reconnect handles a
 // transient drop against the same address.
 static bool resolve_sidecar(esp_ip4_addr_t *out_addr) {
@@ -383,22 +387,24 @@ static void ws_event_handler(void *handler_arg, esp_event_base_t base, int32_t e
       if (data->op_code != 1 || data->data_len <= 0) {
         break;
       }
-      // Reassemble a payload split across multiple events (won't normally
-      // happen at this message size, but payload_len > buffer_size would
-      // cause it) -- accumulate by payload_offset, dispatch once complete.
-      if (data->payload_offset == 0) {
+      // Never parse a truncated JSON document. The client may deliver one
+      // frame in multiple buffer-sized events; require contiguous offsets.
+      if (data->payload_offset == 0) s_ws_msg_len = 0;
+      if (data->payload_len >= WS_MSG_BUF_SIZE || data->payload_offset < 0 ||
+          data->payload_offset != s_ws_msg_len ||
+          data->data_len > data->payload_len - data->payload_offset ||
+          data->data_len >= WS_MSG_BUF_SIZE - s_ws_msg_len) {
+        if (data->payload_offset == 0)
+          ESP_LOGW(TAG, "Discarding oversized/invalid WS frame (%d bytes)", data->payload_len);
         s_ws_msg_len = 0;
+        break;
       }
-      int copy_len = data->data_len;
-      if (s_ws_msg_len + copy_len >= WS_MSG_BUF_SIZE) {
-        copy_len = WS_MSG_BUF_SIZE - 1 - s_ws_msg_len;
-      }
-      if (copy_len > 0) {
-        memcpy(s_ws_msg_buf + s_ws_msg_len, data->data_ptr, copy_len);
-        s_ws_msg_len += copy_len;
-      }
-      if (data->payload_offset + data->data_len >= data->payload_len) {
+      memcpy(s_ws_msg_buf + s_ws_msg_len, data->data_ptr, data->data_len);
+      s_ws_msg_len += data->data_len;
+      if (s_ws_msg_len == data->payload_len) {
+        s_ws_msg_buf[s_ws_msg_len] = '\0';
         handle_ws_message(s_ws_msg_buf, s_ws_msg_len);
+        s_ws_msg_len = 0;
       }
       break;
     default:
@@ -453,6 +459,31 @@ static void log_socket_usage(void) {
   ESP_LOGI(TAG, "Display sockets: %u/%d", count, CONFIG_LWIP_MAX_SOCKETS);
 }
 
+// Runs outside the WS callback, so stop can wait for its worker to finish.
+// Failed discovery leaves the existing address and auto-reconnect intact.
+static bool rediscover_monitor(esp_ip4_addr_t *ip) {
+#ifdef FLU_DISPLAY_TEST_WS_URI
+  return false;  // Never redirect fault-injection traffic to the real monitor.
+#else
+  esp_ip4_addr_t fresh;
+  if (!resolve_sidecar(&fresh)) return false;
+  ESP_LOGI(TAG, "Rediscovered monitor at " IPSTR, IP2STR(&fresh));
+  if (s_ws_started) {
+    // In the pinned client ESP_FAIL here means already stopped (or called
+    // from its own task, which this settings task never is).
+    esp_err_t stopped = esp_websocket_client_stop(s_ws_client);
+    if (stopped != ESP_OK && stopped != ESP_FAIL) return false;
+    s_ws_started = false;
+  }
+  char uri[URL_BUF_SIZE];
+  snprintf(uri, sizeof(uri), "ws://" IPSTR "/ws", IP2STR(&fresh));
+  if (esp_websocket_client_set_uri(s_ws_client, uri) != ESP_OK) return false;
+  *ip = fresh;  // Settings HTTP and WebSocket must use the same fresh address.
+  s_ws_started = esp_websocket_client_start(s_ws_client) == ESP_OK;
+  return s_ws_started;
+#endif
+}
+
 static void settings_task(void *arg) {
   (void) arg;
 
@@ -468,6 +499,8 @@ static void settings_task(void *arg) {
   snprintf(ws_uri, sizeof(ws_uri), "ws://" IPSTR "/ws", IP2STR(&ip));
 
   esp_websocket_client_config_t ws_config = {
+      .enable_close_reconnect = true,
+      .reconnect_timeout_ms = 10000,
 #ifdef FLU_DISPLAY_TEST_WS_URI
       .uri = FLU_DISPLAY_TEST_WS_URI,
 #else
@@ -475,17 +508,31 @@ static void settings_task(void *arg) {
 #endif
   };
   s_ws_client = esp_websocket_client_init(&ws_config);
-  esp_websocket_register_events(s_ws_client, WEBSOCKET_EVENT_ANY, ws_event_handler, NULL);
-  esp_websocket_client_start(s_ws_client);
+  ESP_ERROR_CHECK(s_ws_client ? ESP_OK : ESP_ERR_NO_MEM);
+  ESP_ERROR_CHECK(esp_websocket_register_events(s_ws_client, WEBSOCKET_EVENT_ANY, ws_event_handler, NULL));
+  s_ws_started = esp_websocket_client_start(s_ws_client) == ESP_OK;
   xTaskCreate(wifi_status_task, "display_wifi", 3072, NULL, tskIDLE_PRIORITY + 1, NULL);
 
   bool synced = false;
   int64_t last_socket_log_us = 0;
+  int64_t unhealthy_since_us = 0;
   while (true) {
     // Retry failed fetches; periodic refresh also recovers a missed notification.
     xSemaphoreTake(s_refetch_settings_sem, pdMS_TO_TICKS(synced ? 30000 : 5000));
     ESP_LOGI(TAG, "Refreshing display settings");
     synced = fetch_and_apply_settings(&ip);
+    int64_t now = esp_timer_get_time();
+    if (synced && esp_websocket_client_is_connected(s_ws_client)) {
+      unhealthy_since_us = 0;
+    } else {
+      if (!unhealthy_since_us) unhealthy_since_us = now;
+      if (now - unhealthy_since_us >= REDISCOVER_AFTER_US) {
+        ESP_LOGW(TAG, "Monitor unavailable for 60s; refreshing mDNS and WebSocket");
+        rediscover_monitor(&ip);
+        synced = false;
+        unhealthy_since_us = esp_timer_get_time();
+      }
+    }
     if (esp_timer_get_time() - last_socket_log_us >= 30000000) {
       log_socket_usage();
       last_socket_log_us = esp_timer_get_time();
