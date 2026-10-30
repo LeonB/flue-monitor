@@ -88,6 +88,13 @@ html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
   .signal-bars i.lit { opacity: 1; }
   .connection-detail .signal-label { font-weight: 600; }
   .glow-wrap { flex: 1; display: grid; place-items: center; padding: 12px 24px; min-height: 220px; }
+  .dashboard-tools { display: flex; align-items: center; gap: 18px; }
+  .room-reading { display: inline-flex; align-items: center; gap: 7px; color: var(--color-neutral-700); white-space: nowrap; }
+  .room-reading svg { width: 17px; height: 17px; flex: none; }
+  .room-reading-value { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .room-reading.is-unavailable { opacity: .55; }
+  .bosch-zone-select { width: 100%; min-height: 46px; padding: 10px 14px; border: 1px solid var(--color-divider); border-radius: 18px; background: var(--color-bg); color: var(--color-text); font: inherit; cursor: pointer; }
+  .bosch-zone-select:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
   /* No CSS transition here, deliberately: dashboard.js's runGlowFrame()
      already animates box-shadow/background-color smoothly itself, every
      ~33ms via requestAnimationFrame. A CSS transition on top of that fights
@@ -203,9 +210,15 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
           <span class="live-dot"></span>
           <span x-text="isStale ? 'No recent reading' : 'Live'"></span>
         </div>
+        <div class="dashboard-tools">
+          <span class="room-reading" :class="{ 'is-unavailable': !boschHasTemperature }" x-show="bosch.linked" x-cloak :aria-label="'Room temperature: ' + boschTemperature" :title="'Room temperature: ' + boschTemperature">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7M5 9v11h14V9M10 20v-6h4v6"/></svg>
+            <span class="room-reading-value" x-text="boschHasTemperature ? bosch.temperature_c.toFixed(1).replace('.', ',') + '°' : '—'"></span>
+          </span>
         <button class="btn btn-secondary btn-icon" aria-label="Settings" @click="openSettings()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"></path></svg>
         </button>
+        </div>
       </div>
 
       <div class="connection-strip" role="group" aria-label="Device WiFi signal strength">
@@ -239,8 +252,8 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
             <div class="glow-rate" x-show="reading.thermocouple_ok" x-text="rateLabel"></div>
           </div>
         </div>
-      </div>
 
+      </div>
       <div class="zone-range">
         <span x-text="'Cold below ' + Math.round(settings.zone_cold_max_c) + '°C'"></span>
         <span x-text="'Hot above ' + Math.round(settings.zone_optimal_max_c) + '°C'"></span>
@@ -468,6 +481,41 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
               <button @click="stepBounded('color_transition_exponent', 0.5, 0.5, 12)">+</button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <h6>Bosch room temperature</h6>
+        <div class="field-list">
+          <div class="text-field" role="status" aria-live="polite">
+            <strong x-text="boschStateLabel"></strong>
+            <p x-show="bosch.linked" x-text="boschTemperature"></p>
+            <small class="field-help" x-text="bosch.error || 'Reads your EasyControl room temperature once a minute. Heating settings are never changed.'"></small>
+          </div>
+          <div class="text-field">
+            <button class="btn btn-primary" type="button" @click="boschAction('start')" :disabled="boschBusy || bosch.busy">Connect to Bosch</button>
+            <button class="btn btn-secondary" type="button" x-show="bosch.linked || bosch.auth_url" @click="boschAction('disconnect')" :disabled="boschBusy || bosch.busy">Disconnect</button>
+          </div>
+          <div class="text-field" x-show="bosch.auth_url" x-cloak>
+            <a :href="bosch.auth_url" target="_blank" rel="noreferrer noopener">Open SingleKey ID sign-in →</a>
+            <p class="field-help">After signing in, the browser may report that it cannot open the Bosch app link. In browser developer tools, open Network with Preserve log enabled before signing in. Copy the final redirect's Location header, starting with com.bosch.tt.dashtt.pointt://app/login?code=, and paste it below. The link expires after 20 minutes.</p>
+            <label for="bosch-callback">Bosch return link</label>
+            <textarea id="bosch-callback" class="input" x-model="boschCallback" maxlength="1800" autocomplete="off" spellcheck="false" style="width:100%;min-height:90px"></textarea>
+            <button class="btn btn-primary" type="button" @click="boschAction('callback')" :disabled="boschBusy || bosch.busy || !boschCallback.trim()">Complete connection</button>
+          </div>
+          <div class="text-field" x-show="bosch.linked" x-cloak>
+            <label for="bosch-device">Thermostat serial number</label>
+            <input id="bosch-device" class="input" x-model="boschDevice" maxlength="63" placeholder="Leave blank to detect automatically">
+            <label for="bosch-zone" style="margin-top:12px">Room zone</label>
+            <select id="bosch-zone" class="bosch-zone-select" x-model="boschZone">
+              <template x-for="option in boschZoneOptions" :key="option.id">
+                <option :value="option.id" :selected="option.id === boschZone" x-text="option.label"></option>
+              </template>
+            </select>
+            <small class="field-help">Zones reported by your thermostat. An unused zone may have no temperature reading.</small>
+            <button class="btn btn-secondary" type="button" @click="boschAction('select')" :disabled="boschBusy || bosch.busy">Save selection</button>
+          </div>
+          <div class="text-field" x-show="boschMessage || bosch.busy" :role="boschMessageError ? 'alert' : 'status'" :style="boschMessageError ? 'color: #b42318' : ''" x-text="bosch.busy ? 'Working…' : boschMessage"></div>
         </div>
       </div>
 

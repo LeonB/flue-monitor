@@ -22,6 +22,7 @@ vm.createContext(context);vm.runInContext(worker,context);
   let response;
   handlers.fetch({request,respondWith(p){response=p}});assert.equal((await response).marker,'public loading screen');
   for(const request of [
+    {url:'https://demo.pagekite.me/login',method:'GET',mode:'navigate'},
     {url:'https://demo.pagekite.me/api/reading',method:'GET',mode:'same-origin'},
     {url:'https://demo.pagekite.me/api/auth/login',method:'POST',mode:'same-origin'},
     {url:'https://demo.pagekite.me/',method:'GET',mode:'same-origin'}, // live HTML fetch

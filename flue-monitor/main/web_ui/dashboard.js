@@ -101,6 +101,94 @@ function app() {
     lastReadingMs: 0,
     settings: {},
     draft: {},
+    bosch: { state: 'unavailable', available: false },
+    boschDevice: '',
+    boschZone: 'zn1',
+    boschCallback: '',
+    boschBusy: false,
+    boschMessage: '',
+    boschMessageError: false,
+    boschPendingAction: '',
+    boschReceivedMs: 0,
+    boschRequest: false,
+    get boschHasTemperature() {
+      return this.bosch.available && Number.isFinite(this.bosch.temperature_c) &&
+        Date.now() - this.boschReceivedMs < 20000;
+    },
+    get boschTemperature() {
+      return this.boschHasTemperature ? this.bosch.temperature_c.toFixed(1) + ' °C' : 'Unavailable';
+    },
+    get boschZoneOptions() {
+      const reported = Array.isArray(this.bosch.zones) ? this.bosch.zones : [];
+      // Retain the saved/draft selection while discovery is pending or offline.
+      const ids = [...new Set([...reported, this.bosch.zone, this.boschZone].filter(id => /^zn[0-9]{1,4}$/.test(id)))];
+      if (!ids.length) ids.push('zn1');
+      return ids.sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)))
+        .map(id => ({ id, label: `Zone ${Number(id.slice(2))}${id === 'zn1' ? ' · Main room' : ''}` }));
+    },
+    get boschStateLabel() {
+      return ({disconnected: 'Not connected', connected: 'Connected', connecting: 'Connecting',
+        awaiting_login: 'Waiting for Bosch sign-in', login_error: 'Sign-in needs attention',
+        retrying: 'Retrying connection', reauth_required: 'Sign in again',
+        invalid_reading: 'No reading for this zone', select_device: 'Select thermostat',
+        storage_error: 'Could not save', unavailable: 'Status unavailable', error: 'Connection error'})[this.bosch.state] || 'Checking…';
+    },
+    async fetchBosch() {
+      if (this.boschRequest) return;
+      this.boschRequest = true;
+      try {
+        const res = await this.authorizedFetch('/api/bosch', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        if (!res.ok) throw new Error('Unavailable');
+        this.bosch = await res.json();
+        this.boschReceivedMs = Date.now();
+        if (this.boschPendingAction && !this.bosch.busy) {
+          if (this.bosch.error) {
+            this.boschMessage = this.bosch.error;
+            this.boschMessageError = true;
+            this.boschPendingAction = '';
+          } else if (this.bosch.state === 'connected' && this.bosch.available) {
+            this.boschMessage = 'Bosch connected. Room temperature: ' + this.boschTemperature;
+            this.boschMessageError = false;
+            this.boschCallback = '';
+            this.boschPendingAction = '';
+          } else if (this.boschPendingAction === 'start' && this.bosch.state === 'awaiting_login') {
+            this.boschMessage = 'Sign-in started. Open SingleKey ID and paste the new return link below.';
+            this.boschPendingAction = '';
+          } else if (this.boschPendingAction === 'disconnect' && this.bosch.state === 'disconnected') {
+            this.boschMessage = 'Bosch disconnected.';
+            this.boschPendingAction = '';
+          }
+        }
+      } catch {
+        this.bosch = { ...this.bosch, available: false, state: 'unavailable', auth_url: null };
+      } finally { this.boschRequest = false; }
+    },
+    async boschAction(action) {
+      if (this.boschBusy || this.bosch.busy) return;
+      this.boschBusy = true; this.boschMessage = ''; this.boschMessageError = false; this.boschPendingAction = '';
+      const body = { action };
+      if (action === 'callback') body.callback = this.boschCallback.trim();
+      if (action === 'select') { body.device = this.boschDevice.trim(); body.zone = this.boschZone.trim(); }
+      try {
+        if (action === 'callback') {
+          let callback;
+          try { callback = new URL(body.callback); } catch {}
+          if (!callback || callback.protocol !== 'com.bosch.tt.dashtt.pointt:' ||
+              callback.hostname !== 'app' || callback.pathname !== '/login' ||
+              !callback.searchParams.get('code') || !callback.searchParams.get('state')) {
+            throw new Error('Invalid Bosch return link. Paste the complete com.bosch.tt.dashtt.pointt://app/login?code=…&state=… link after signing in.');
+          }
+        }
+        const res = await this.authorizedFetch('/api/bosch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+        if (!res.ok) throw new Error(await res.text());
+        this.boschPendingAction = action;
+        this.boschMessage = action === 'callback' ? 'Checking the return link with Bosch…' : 'Waiting for confirmation from the monitor…';
+        // Cloud work runs asynchronously. Keep the button disabled while it runs.
+        await this.fetchBosch();
+      } catch (e) { this.boschMessageError = true; this.boschMessage = e.name === 'AbortError' ? 'Request timed out. Check the status before retrying.' : e.message; }
+      finally { this.boschBusy = false; }
+    },
     pagekiteStatus: { state: 'unknown' },
     pagekiteStatusTimer: null,
     events: [],
@@ -160,6 +248,8 @@ function app() {
       this.$nextTick(() => window.flueStartupDone?.());
       setInterval(() => this.fetchReading(), 5000);
       setInterval(() => this.fetchDeviceWifi(), 10000);
+      setInterval(() => this.fetchBosch(), 5000);
+      this.fetchBosch();
       requestAnimationFrame((t) => this.runGlowFrame(t));
       await Promise.all([this.fetchReading(), this.fetchSettings(), this.fetchEvents(), this.fetchDeviceWifi()]);
       this.fetchHistory(); // Warm the graph while the dashboard is visible.
@@ -280,9 +370,12 @@ function app() {
 
     async logout() {
       try {
-        await fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      } finally {
+        const response = await fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (!response.ok) throw new Error('Could not sign out. Please retry.');
         location.assign('/');
+      } catch (error) {
+        this.authError = true;
+        this.authMessage = error.message;
       }
     },
 
@@ -353,6 +446,9 @@ function app() {
       this.draft = { ...this.settings };
       this.themeMenuOpen = false;
       this.view = 'settings';
+      this.boschDevice = this.bosch.device || '';
+      this.boschZone = this.bosch.zone || 'zn1';
+      this.fetchBosch();
       this.fetchPagekiteStatus();
       if (this.pagekiteStatusTimer === null) this.pagekiteStatusTimer = setInterval(() => {
         if (this.view === 'settings') this.fetchPagekiteStatus();

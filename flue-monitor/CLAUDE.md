@@ -1,5 +1,208 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-10-30 owner verification of final login flow
+
+User confirms retained-startup + real /login navigation works on the iPhone
+home-screen app without the redundant 1Password save prompt. Mac field
+recognition also confirmed earlier. Final firmware deployed, public root303
+/login, login HTML and updated startup source verified. Temporary AutoFill
+routes/buttons removed. Bosch live room-temperature display confirmed by owner
+screenshot; generic Sheets script updated by owner, firmware upload success
+observed. These statements supersede earlier pending/deployment notes below.
+
+## 2026-10-30 real login navigation, startup retained
+
+Owner confirms direct-login test inside home-screen app does NOT trigger the
+1Password save prompt. Keep the startup shell: root now redirects unauthenticated
+requests303 to /login. loading.html recognizes the fetch's final /login URL and
+uses location.replace rather than document.write for login HTML. Authenticated
+dashboard insertion stays unchanged; offline/retry behavior stays unchanged.
+/login uses the same handler/fields/authentication and is allowed by PageKite;
+service worker intercepts only root navigations. Login script also navigates
+from non-/login paths before touching fields, supporting old cached startup
+shells. This makes login a real document navigation even during SW updates.
+Temporary /autofill-direct and ?autofill_test=single routing and test buttons
+removed. Tests cover startup navigation versus insertion, offline retry, legacy
+shell guard, first-time setup/login/error flows, and worker/tunnel allowlists.
+Final owner iPhone confirmation of this retained-startup flow still pending.
+
+## 2026-10-30 home-screen direct-login experiment
+
+Owner reports normal Safari does NOT show repeated save prompt. Added
+/autofill-direct alias to the same authenticated root handler, allowlisted
+through PageKite. Existing worker intercepts only pathname '/', so this alias
+loads HTML directly without cached loading shell/document.write even with an
+old active worker. Same login markup, fields, JSON authentication and success
+redirect to '/'; default login unchanged. Test direct login links from login
+and settings allow same-window navigation inside the home-screen app. Settings
+button logs out current session first; failed logout shows error and does not
+navigate. No credential or password changes. Host tests cover worker bypass,
+PageKite routing, absent-confirm variant, login/setup and test logout behavior.
+Path differs (same origin); if result changes, follow up to isolate path versus
+shell loading. Owner iPhone/1Password result remains pending.
+
+## 2026-10-30 controlled iPhone AutoFill experiment
+
+Owner confirms Mac recognition fixed, repeated iPhone save prompt persists,
+same PageKite URL in 1Password. Uses home-screen app and 1Password extension.
+Do not assume iOS bug proves root cause. Normal login retains baseline form;
+/?autofill_test=single removes only the unused confirmation input from the
+server HTML when a password is already configured. Setup remains unchanged.
+JS tolerates absent confirmation via detached input. PageKite preserves only
+this exact root test query, other existing routing unchanged. Host login tests
+include absent confirmation, PageKite tests include exact test-link forwarding.
+First compare normal URL in Safari versus home-screen app. If Safari reproduces,
+compare baseline and single-field test in same Safari context/autofill method.
+Real iOS outcome requires owner; do not claim cause or solution yet. Candidate
+remaining variables: password-only identity, async login, service-worker loading
+shell document.write. Do not change all at once or invent a username.
+
+## 2026-10-30 password-manager form semantics
+
+User screenshot now shows live room19.9C after Bosch TX-buffer correction.
+Reported repeated 1Password save prompt on iPhone and missed recognition on
+Mac. Login form now has stable id/name, method=post, explicit login/setup
+ action and submit button type. Hidden confirmation is disabled, aria-hidden
+and autocomplete=off during normal login; enabled/new-password only for initial
+enrollment. Password remains current-password for login. Actual inline-script
+regression covers both modes and existing login/error flows. No account name
+invented and no credentials accessed. End-to-end 1Password behavior still
+needs owner testing; differing saved website origins may also matter.
+
+## 2026-10-30 Bosch HTTP header buffer fix deployed
+
+Owner paired but reported retrying/unavailable. Found authorized requests used
+IDF default512-byte TX buffer; strict header buffering rejects longer Bearer
+headers. TX capacity now token length+256 for authenticated resource requests.
+Actual IDF header serializer regression (tools/test_bosch_header.py) reproduces
+failure at512 and passes new capacity with synthetic600–8192-byte tokens;
+protocol/UI tests also pass. Added nonsecret stage + HTTP/transport/JSON/size
+failure detail to retry status. OTA completed and auth endpoint available.
+Owner must reopen authenticated dashboard to confirm live Bosch temperature;
+no authenticated status/actual token size read, so this remains a demonstrated
+client bug and plausible cause, not confirmed full cloud recovery.
+
+## 2026-10-30 asynchronous Bosch result feedback
+
+UI tracks pending action through status polls, keeping explicit checking,
+failure or connected-with-temperature feedback beside the controls. Callback
+input clears only after connected+available, not merely HTTP202. Invalid or
+old-link errors persist, with a clearer instruction to start a new sign-in.
+C/UI host tests pass, including delayed connecting→connected and login_error.
+
+## 2026-10-30 Bosch input feedback
+
+Dashboard rejects malformed callback URLs before POST, retains the input and
+shows an alert. Action errors persist across five-second status polls until
+another action; previously fetchBosch erased them. Host UI tests cover malformed
+input and persistent HTTP errors. Built and OTA uploaded to the same confirmed
+monitor .137; local preview serves changed JS without server restart.
+
+## 2026-10-30 Bosch + Sheets firmware deployed
+
+User confirmed the generic Apps Script was updated, then requested OTA.
+Built official IDF6.0.3 image0x175070 (8080 bytes free in OTA slot); Bosch C/UI
+and actual Apps Script host tests pass. OTA to192.168.1.137 confirmed first by
+ARP MAC8c:94:df:0b:be:fc returned OK, rebooting. Postboot WebSocket at uptime
+30/40/50s reports real thermocouple23.4C, light_sleep_enabled=true,2MiB PSRAM,
+PageKite connected and one Sheets attempt/completion/success. Public login
+returns200; dashboard password remains configured. Internal low-water28520
+bytes during first Sheets upload. This is a short smoke check, not a soak.
+Bosch pairing/actual room-temperature transmission on device still requires
+owner login and linking from the real monitor dashboard; mock preview is not
+that device. No tokens/passwords transferred or owner session accessed.
+Supersedes earlier not-flashed notes for these firmware/UI/Sheets changes.
+
+## 2026-10-30 generic Sheets webhook (not deployed)
+
+Code.gs now maps data by header name and appends new query keys automatically.
+Legacy labels remain stable; secret/event_ts/age_ms are excluded, new keys must
+match [a-z][a-z0-9_]{0,63}. Decimal values become numbers, absent values blank,
+text is escaped against formula interpretation. Existing rows are untouched;
+column reordering works, renaming a header creates a new original-name column.
+ScriptLock covers header discovery, expansion, append and flush. Future fields
+need only firmware query additions (and enough URL buffer); no script edits.
+Actual-handler mock tests cover dynamic/reordered/wide schemas, secret rejection,
+lock contention/release, text escaping and room-temperature validation.
+Still requires one live Apps Script deployment update; no Google writes made.
+
+## 2026-10-30 Sheets room-temperature field (not deployed)
+
+Every periodic/event upload now includes room_temperature. Bosch exposes a
+mutex-protected snapshot getter (no network); absent, failed, out-of-range or
+>180s-old readings stay NAN internally and serialize as an empty query value.
+Queued events capture it at enqueue time alongside the flue sample, not at
+transmission time. URL buffer grows512→576 bytes; event queue adds one double
+per item. Code.gs appends Room Temperature (C) as column G and separately sets
+its one-decimal format even when existing B formatting already matches.
+Missing/invalid data stays blank, valid zero survives, previous columns/rows
+retain their meaning. Tests cover getter freshness and actual Apps Script
+append/format/backfill behavior without Google writes.
+
+The live Apps Script deployment is NOT changed. Preserve its real secret when
+copying Code.gs, then Deploy → Manage deployments → New version. Firmware also
+still needs flashing/pairing. Do not claim live Sheets rows contain this field.
+The earlier room badge was rejected: approved UI is now a small house icon and
+19,6° in the top-right toolbar beside Settings, without a card or frame.
+
+## 2026-10-30 room-temperature presentation and zone dropdown
+
+Dashboard room reading now sits in a neutral rounded badge immediately below
+the flue glow, with a house icon, heading font and explicit unavailable state.
+Room zone is a native accessible select. GET /api/bosch includes zones discovered
+from validated /zones/zn* references, cached ten minutes per gateway, deduplicated
+and capped at32. Discovery failure preserves prior options without blocking the
+actual temperature read. UI retains saved/draft selection and numerically sorts
+options. Mock provides zn1/zn2; browser verified selecting/saving each and
+returning to the dashboard. C sanitizer test covers discovery/path rejection,
+deduplication/cache/failure retention; JS covers dropdown fallback/sorting.
+Preview server restarted on localhost:8777 with simulated connected19.6C.
+Not flashed.
+
+## 2026-10-30 Bosch POINTT cloud integration (built; not flashed)
+
+Final ESP-IDF6.0.3 build: 0x1749c0 (1526208 bytes), 9792 bytes free in the
+unchanged OTA slot; +10592 bytes versus the preceding full-feature image.
+Existing optimization, certificate bundle, PSRAM and light-sleep settings unchanged.
+
+`bosch_client.c` owns a read-only cloud worker and authenticated GET/POST
+/api/bosch (also allowlisted through PageKite). UI uses the manually pasted
+app callback from the proven Mac test; firmware generates fresh 256-bit PKCE,
+state and nonce per attempt. Callbacks require the exact scheme/host/path,
+matching state and a 20-minute lifetime. Tokens/codes are not in API responses,
+settings or the device WebSocket. Do not add credentials to those device
+surfaces. POST requires dashboard authentication and Origin; queued commands
+keep the HTTP task free of cloud I/O. Only one user operation may be queued.
+
+A separate `bosch` NVS namespace stores one credentials JSON record
+(refresh token, device, zone). Rotated refresh tokens are saved immediately;
+access tokens remain in RAM and are reacquired after boot. NVS is currently
+unencrypted. Disconnect deletes local credentials, not cloud-side grants.
+Polling is 60 seconds, bounded 24 KiB HTTP response, full certificate verification
+and no redirects; transient failures back off 30–900 seconds, rejected refresh
+credentials require reauthorization. Room values must be finite within -40…60C;
+the observed unused-zone 1000 sentinel is rejected. Failed or >180s-old samples
+are unavailable. A single discovered gateway is selected automatically; manual
+serial/zone selection covers multiple gateways. Room temperature is shown
+separately without changing flue classification, history, Sheets or display.
+
+Task stack is 8192 bytes in internal RAM; response/token/form buffers prefer
+PSRAM with internal fallback. Actual TLS peak memory, stack headroom, reboot
+persistence and long-term cloud operation remain unverified on the ESP32.
+No firmware was flashed and no real credentials were added to source/tests.
+The earlier Mac test proves CT200 firmware05.04.00 cloud login, refresh and
+zn1=19.6C, not this C implementation on hardware.
+
+Host checks execute actual C under ASan/UBSan with NVS/network/RTOS shims:
+test_bosch.py covers PKCE URL against independent SHA256, callback validation,
+response limits, token rotation/restart loading, storage failure, auth/CSRF,
+stale/invalid readings and disconnect. test_bosch_ui.js covers freshness,
+callback clearing, selection and errors. test_pagekite.py covers Bosch route
+forwarding with Cookie/Origin. Existing settings-sync regression passes.
+Browser mock verified disconnected → pairing → connected, invalid zn2,
+recovery to zn1 and dashboard temperature with no console errors.
+
+
 ## 2026-10-30 official ESP-IDF 6.0.3 migration (30-minute full-feature soak passed)
 
 User requested 6.0.3 with all features. Official SDK installed alongside old

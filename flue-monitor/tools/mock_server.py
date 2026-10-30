@@ -78,6 +78,9 @@ if os.environ.get("MOCK_PAGEKITE_ENABLED", "false").lower() == "true":
     settings["pagekite_custom_domain"] = os.environ.get("MOCK_PAGEKITE_CUSTOM_DOMAIN", "")
     settings["pagekite_secret_set"] = True
 
+# Synthetic Bosch state for UI development only; never contacts Bosch.
+bosch = {"state": "disconnected", "linked": False, "available": False,
+         "busy": False, "error": "", "device": "", "zone": "zn1", "zones": ["zn1", "zn2"], "temperature_c": None}
 server_start = time.monotonic()
 
 
@@ -242,6 +245,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json({"settings_revision": settings["settings_revision"], "display_applied": os.environ.get("MOCK_DISPLAY_APPLIED", "true").lower() == "true"})
             return
 
+        if path == "/api/bosch":
+            self._json(bosch)
+            return
+
         if path == "/api/pagekite/status":
             default_state = "connected" if settings["pagekite_enabled"] else "disabled"
             state = os.environ.get("MOCK_PAGEKITE_STATUS", default_state)
@@ -276,6 +283,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = json.loads(body) if body else {}
         except json.JSONDecodeError:
             self._json({"error": "invalid JSON"}, 400)
+            return
+
+        if path == "/api/bosch":
+            action = data.get("action")
+            if action == "start":
+                bosch.update(state="awaiting_login", auth_url="https://example.invalid/mock-bosch-login")
+            elif action == "callback":
+                bosch.pop("auth_url", None)
+                bosch.update(state="connected", linked=True, available=True, temperature_c=19.6, device="123456789", age_s=0)
+            elif action == "select":
+                bosch.update(device=data.get("device") or "123456789", zone=data.get("zone", "zn1"))
+                available = bosch["zone"] == "zn1"
+                bosch.update(available=available, temperature_c=19.6 if available else None,
+                             state="connected" if available else "invalid_reading",
+                             error="" if available else "This zone has no valid room temperature. Select another zone.")
+            elif action == "disconnect":
+                bosch.pop("auth_url", None)
+                bosch.update(state="disconnected", linked=False, available=False, temperature_c=None, error="")
+            else:
+                self._json({"error": "unknown action"}, 400)
+                return
+            self._json({"accepted": True}, 202)
             return
 
         if path == "/api/settings":

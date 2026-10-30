@@ -262,6 +262,52 @@ No flashing, no reboot, no real device needed for CSS/layout/JS changes —
 only reach for a real flash-and-check once a change also touches the
 firmware side (a new REST field, a new settings key, etc.).
 
+## Bosch EasyControl room temperature
+
+Settings → **Bosch room temperature** connects a CT200 through the POINTT
+cloud API. Click **Connect to Bosch**, open the generated SingleKey ID link,
+and paste the complete `com.bosch.tt.dashtt.pointt://app/login?code=…&state=…`
+callback into **Bosch return link**. In Firefox, enable Network → Preserve log
+before signing in and copy the final redirect's `Location` response header.
+The browser's unknown-protocol error at that point is expected. Links belong
+to one sign-in attempt and expire after 20 minutes or a monitor reboot.
+
+The main room normally uses `zn1`. Room zone is a dropdown populated from the
+thermostat’s `/zones` references (cached for ten minutes). The current selection
+remains available while discovery is pending or offline. With exactly one gateway it is discovered
+automatically. With multiple gateways, enter the desired serial number without
+spaces and save the selection. The dashboard displays the selected room
+separately from the flue sensor; it does not alter stove classification,
+history or display lighting. Each Sheets upload also includes the current
+room temperature; see `google-sheets-logger/README.md` for the script update.
+
+The worker polls once per minute, refreshes tokens before expiry and after
+reboot, retries transient failures with 30–900 second backoff, and requests
+sign-in again on rejected refresh credentials. Values outside -40…60 °C
+(including the CT200's observed `1000` sentinel), failed reads and samples
+older than three minutes are unavailable. Requests never write heating settings.
+
+`GET /api/bosch` returns status, freshness, selected device/zone, counters and
+an active sign-in URL. `POST /api/bosch` accepts `action` values `start`,
+`callback` (with `callback`), `select` (with `device` and `zone`) and `disconnect`.
+POST returns 202 for queued work; poll GET for completion. Both methods require
+a dashboard session; POST also requires the matching Origin. Both are available
+through PageKite. Tokens and authorization codes are never returned by the API,
+settings or device WebSocket. The pending sign-in URL contains only public OAuth
+parameters; its PKCE verifier remains private on the monitor.
+
+The refresh token and selection are one record in the separate `bosch` NVS
+namespace. Access tokens remain in RAM. **Disconnect** removes the local
+credentials; it does not revoke Bosch-side grants. NVS is not encrypted in the
+current firmware, and the LAN dashboard still uses HTTP. Use the HTTPS dashboard
+for pairing where possible. This is an unofficial integration using the Bosch
+app's client ID, based on [ha_bosch](https://github.com/CaseyRo/ha_bosch).
+
+Host checks: `python3 tools/test_bosch.py`, `node tools/test_bosch_ui.js` and
+`python3 tools/test_pagekite.py`. The mock server simulates pairing and an
+invalid `zn2` reading without contacting Bosch. Hardware pairing and live room-temperature display have been verified. Long-running
+token refresh, restart recovery and Bosch-specific peak memory still need a longer soak.
+
 ## Google Sheets logging
 
 Configure `google_sheets_webhook_url`/`google_sheets_secret` via

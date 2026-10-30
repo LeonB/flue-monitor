@@ -4,13 +4,30 @@
 readings to a Google Sheet. It's a template: deploying it happens in your own
 Google account, not from this repo.
 
-This is a fork of the original ESPHome sidecar's own version of this same
-script (that sidecar has since been retired and removed), adjusted for the
-BMP581 sensor's physical removal -- no more `Temperature (C)`/`Pressure (Pa)`
-columns, and pointed at a distinct sheet tab (`Sensor Log`)
-rather than reusing the old 8-column tab, since dropping two *leading*
-columns isn't something the header-backfill logic (designed for
-trailing-column *additions*) can reconcile safely against old rows.
+Columns are matched by header name, never by fixed position. Existing rows and
+headers are left in place; missing columns are appended. Legacy field names
+keep their readable labels (for example `thermocouple` → `Thermocouple (C)`).
+Other query parameters automatically become columns with their exact key as
+header. Do not rename those headers: the original name would be added again.
+
+## Adding future fields
+
+Add a URL-encoded query parameter in the firmware, such as `humidity=45.6`.
+The script creates a `humidity` column on the first upload and leaves it blank
+in uploads without that field. No Apps Script edit or redeployment is needed.
+Keys must match `[a-z][a-z0-9_]{0,63}`. `secret`, `event_ts` and `age_ms` are
+reserved transport fields and are never logged as additional columns.
+Finite decimal numbers are stored as numbers, empty values as empty cells,
+and other values as literal text (not formulas). Future fields should send
+an empty value when unavailable and validate physical ranges in the firmware.
+Known temperature fields retain their existing validation and display formats.
+New fields use Sheets' default formatting; units can be included in the key
+(e.g. `humidity_pct`). Keep field keys stable to avoid redundant columns.
+The firmware still needs enough URL buffer space for any additional data.
+
+A script lock protects header discovery and append against concurrent uploads.
+One update of the existing Apps Script deployment is required to enable this
+generic handler; preserve its secret and deployment URL.
 
 ## Deploy it
 
@@ -74,9 +91,42 @@ consequences:
   for: an occasional 20-40s Google stall blocks only that task, never
   sensor sampling or the REST/WS servers.
 
+## Copy code with the device's existing secret
+
+Run `make gsheets-code` in the firmware directory (or
+`make -C flue-monitor gsheets-code` from the repository root).
+It prompts for the dashboard password with hidden input, signs in, reads the
+Sheets secret, and prints the ready-to-paste script and copies it with macOS
+`pbcopy`. Override discovery with `HOST=192.168.1.137` when needed. Use the
+monitor's LAN address; the tunnel's settings endpoint redacts credentials.
+Password and session cookie stay in memory; the temporary session is logged
+out after reading settings. No secret files are written. The printed code
+and clipboard do contain the Sheets secret, as before. Authentication failures
+stop without replacing the clipboard. This requires an interactive terminal
+and Python 3; no extra Python packages are needed.
+
 ## Updating the deployed script
 
 Editing `Code.gs` in the Apps Script editor doesn't take effect until you
 redeploy: **Deploy -> Manage deployments -> pencil icon on the active
 deployment -> Version: New version -> Deploy**. The web app URL stays the
 same across versions.
+
+## Room temperature
+
+Each upload (temperature change, heartbeat and logged event) includes
+`room_temperature` from the selected Bosch zone. The script appends it in
+**Room Temperature (C)** (column G in the original layout), without moving the existing six columns.
+Existing rows stay unchanged. Missing, failed or older-than-three-minute
+readings are sent empty; old firmware also produces an empty cell. Valid zero
+is retained and invalid values such as 1000 are rejected. For queued events,
+the room measurement is captured at the tap, alongside the flue reading.
+
+To enable the new column on the live sheet, copy the updated `Code.gs` into
+the existing Apps Script project **while preserving its real SHARED_SECRET**,
+then update the existing deployment to a new version as described above.
+The webhook URL can stay the same. Updating only the firmware sends the extra
+parameter but the old deployed script will ignore it.
+
+Verification: `node tools/test_sheets_room.js` from the firmware project folder
+runs the actual handler with a mock Sheet; it makes no requests to Google.

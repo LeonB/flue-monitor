@@ -1,4 +1,4 @@
-set(app_sources main.c sensors.c settings.c rest_api.c dashboard_auth.c ws_server.c sheets_logger.c status_led.c pagekite_tunnel.c memory_diagnostics.c)
+set(app_sources main.c sensors.c settings.c rest_api.c dashboard_auth.c ws_server.c sheets_logger.c status_led.c pagekite_tunnel.c memory_diagnostics.c bosch_client.c)
 idf_component_register(SRCS ${app_sources}
                        INCLUDE_DIRS "."
                        PRIV_REQUIRES esp_event esp_netif esp_wifi nvs_flash wifi_setup captive_portal ota_server

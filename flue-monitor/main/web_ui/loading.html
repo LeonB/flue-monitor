@@ -54,9 +54,15 @@ async function connect() {
     const response = await fetch(location.href, {cache: 'no-store', credentials: 'same-origin', signal: controller.signal});
     if (!response.ok || !(response.headers.get('Content-Type') || '').includes('text/html'))
       throw new Error('Monitor unavailable');
+    // The server redirects unauthenticated requests to the real login URL.
+    // Navigate there instead of inserting password fields with document.write.
+    if (new URL(response.url).pathname === '/login') {
+      location.replace('/login');
+      return;
+    }
     const html = await response.text();
     clearTimeout(timer);
-    // Replace the public shell with the live dashboard or sign-in page,
+    // Replace the public shell with the live dashboard,
     // keeping this URL and origin so scripts, cookies and relative paths work.
     document.open();
     document.write(html);

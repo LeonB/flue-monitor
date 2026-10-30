@@ -22,49 +22,66 @@
 // GET end-to-end sidesteps the whole issue since GET always redirects to
 // GET regardless of the client's redirect-method policy.
 const SHARED_SECRET = "REPLACE_ME_WITH_A_RANDOM_STRING";
-// A distinct tab from the old ESPHome sidecar's "Sensor Log" (which has
-// Temperature/Pressure columns from the now-removed BMP581) -- this schema
-// drops two *leading* columns rather than adding trailing ones, so the
-// existing backfill-missing-trailing-columns logic below can't safely
-// reconcile it against old rows without corrupting their meaning. Point at
-// a fresh tab instead of silently shifting what every column means partway
-// through the sheet's history.
+// Existing headers determine column positions; new fields are appended.
 const SHEET_NAME = "Sensor Log";
-const HEADER_ROW = ["Timestamp", "Thermocouple (C)", "Cold Junction (C)", "Event", "Rate (C/min)", "Zone"];
+// Legacy labels remain stable. New fields use their exact query key as header.
+const FIELDS = [
+  ["thermocouple", "Thermocouple (C)", "0.0"],
+  ["cold_junction", "Cold Junction (C)", "0.0"],
+  ["event", "Event", ""],
+  ["rate", "Rate (C/min)", "0.00"],
+  ["zone", "Zone", ""],
+  ["room_temperature", "Room Temperature (C)", "0.0"],
+];
+const RESERVED = new Set(["secret", "event_ts", "age_ms"]);
+const HEADER_ROW = ["Timestamp", ...FIELDS.map(f => f[1])];
+
+function cellValue(key, value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (text === "") return "";
+  // Decimal numbers only: retain zero, reject NaN/Infinity and formula input.
+  const number = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(text) ? Number(text) : NaN;
+  if (["thermocouple", "cold_junction", "rate", "room_temperature"].includes(key)) {
+    if (!Number.isFinite(number)) return "";
+    return key === "room_temperature" && (number < -40 || number > 60) ? "" : number;
+  }
+  if (key !== "event" && key !== "zone" && Number.isFinite(number)) return number;
+  // appendRow interprets leading '=' as a formula. Store arbitrary text literally.
+  return /^[=+@-]/.test(text) ? "'" + text : text;
+}
 
 function doGet(e) {
-  const p = e.parameter;
-
-  if (p.secret !== SHARED_SECRET) {
-    return ContentService.createTextOutput("forbidden").setMimeType(ContentService.MimeType.TEXT);
-  }
-
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME)
-    || SpreadsheetApp.getActiveSpreadsheet().insertSheet(SHEET_NAME);
-
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(HEADER_ROW);
-  } else {
-    // Sheet predates one or more trailing columns added later (Rate/Zone
-    // were the last such addition, on the old 8-column schema) -- backfill
-    // whichever header cells are still missing, generalized to any number
-    // of newly-added trailing columns rather than just the one most
-    // recently added.
-    for (let col = sheet.getLastColumn() + 1; col <= HEADER_ROW.length; col++) {
-      sheet.getRange(1, col).setValue(HEADER_ROW[col - 1]);
+  const p = (e && e.parameter) || {};
+  const reply = text => ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.TEXT);
+  if (p.secret !== SHARED_SECRET) return reply("forbidden");
+  // Serialize header discovery + row append across concurrent webhook requests.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return reply("busy");
+  try {
+    const book = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = book.getSheetByName(SHEET_NAME) || book.insertSheet(SHEET_NAME);
+    const headers = sheet.getLastRow() === 0 ? [] :
+      sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const previousWidth = headers.length;
+    for (const label of HEADER_ROW) if (!headers.includes(label)) headers.push(label);
+    const values = new Map();
+    for (const key of Object.keys(p).sort()) {
+      if (RESERVED.has(key) || !/^[a-z][a-z0-9_]{0,63}$/.test(key)) continue;
+      const known = FIELDS.find(f => f[0] === key);
+      const label = known ? known[1] : key;
+      if (!headers.includes(label)) headers.push(label);
+      values.set(label, cellValue(key, p[key]));
     }
-  }
-
-  // Numeric columns default to Sheets' "Automatic" format, which drops
-  // insignificant trailing zeros (26.0 displays as 26) even though the
-  // stored value is unchanged -- fix the display once per sheet rather than
-  // relying on whoever's reading it to notice and reformat manually.
-  if (sheet.getRange("B2").getNumberFormat() !== "0.0") {
-    sheet.getRange("B2:B").setNumberFormat("0.0"); // Thermocouple (C)
-    sheet.getRange("C2:C").setNumberFormat("0.0"); // Cold Junction (C)
-    sheet.getRange("E2:E").setNumberFormat("0.00"); // Rate (C/min)
-  }
-
+    if (headers.length > sheet.getMaxColumns())
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
+    if (headers.length > previousWidth)
+      sheet.getRange(1, previousWidth + 1, 1, headers.length - previousWidth)
+        .setValues([headers.slice(previousWidth)]);
+    for (const [, label, format] of FIELDS) {
+      const col = headers.indexOf(label) + 1;
+      if (format && sheet.getRange(2, col).getNumberFormat() !== format)
+        sheet.getRange(2, col, sheet.getMaxRows() - 1, 1).setNumberFormat(format);
+    }
   // Two ways the device tells us when this actually happened -- prefer the
   // more accurate one (see REVIEW.md finding D4):
   //   - event_ts: an absolute Unix timestamp (seconds) from the device's own
@@ -84,14 +101,11 @@ function doGet(e) {
   const ageMs = Number(p.age_ms) || 0;
   const timestamp = eventTsS > 0 ? new Date(eventTsS * 1000) : new Date(Date.now() - ageMs);
 
-  sheet.appendRow([
-    timestamp,
-    Number(p.thermocouple),
-    Number(p.cold_junction),
-    p.event || "",
-    Number(p.rate),
-    p.zone || "",
-  ]);
-
-  return ContentService.createTextOutput("ok").setMimeType(ContentService.MimeType.TEXT);
+    values.set("Timestamp", timestamp);
+    sheet.appendRow(headers.map(label => values.has(label) ? values.get(label) : ""));
+    SpreadsheetApp.flush();
+    return reply("ok");
+  } finally {
+    lock.releaseLock();
+  }
 }
