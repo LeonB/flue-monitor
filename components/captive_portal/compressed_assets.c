@@ -1,4 +1,5 @@
 #include "compressed_assets.h"
+#include "buffer_memory.h"
 #include "miniz.h"
 #include <stdlib.h>
 #include <string.h>
@@ -33,8 +34,13 @@ bool compressed_asset_accepts_gzip(httpd_req_t *req) {
 esp_err_t compressed_asset_send_identity(httpd_req_t *req, const unsigned char *gzip, size_t size, size_t raw_size) {
   if (size < 18 || gzip[0] != 0x1f || gzip[1] != 0x8b || gzip[2] != 8 || gzip[3] != 0)
     return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Invalid embedded asset");
-  tinfl_decompressor *inflater = calloc(1, sizeof(*inflater));
-  unsigned char *dictionary = malloc(TINFL_LZ_DICT_SIZE);
+#if CONFIG_FLUE_DIAG_ASSETS_INTERNAL
+  tinfl_decompressor *inflater = heap_caps_calloc(1, sizeof(*inflater), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  unsigned char *dictionary = heap_caps_malloc(TINFL_LZ_DICT_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#else
+  tinfl_decompressor *inflater = buffer_memory_calloc(1, sizeof(*inflater));
+  unsigned char *dictionary = buffer_memory_alloc(TINFL_LZ_DICT_SIZE);
+#endif
   if (!inflater || !dictionary) {
     free(inflater); free(dictionary);
     httpd_resp_set_status(req, "503 Service Unavailable");

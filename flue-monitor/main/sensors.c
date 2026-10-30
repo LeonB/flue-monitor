@@ -15,6 +15,7 @@
 
 #include "config.h"
 #include "settings.h"
+#include "buffer_memory.h"
 
 static const char *TAG = "sensors";
 
@@ -132,7 +133,7 @@ static SemaphoreHandle_t s_last_reading_mutex;
 // it too.
 #define HISTORY_PUSH_EVERY_N (240000 / SENSOR_READ_INTERVAL_MS)
 _Static_assert(240000 % SENSOR_READ_INTERVAL_MS == 0, "History must retain a four-minute interval");
-static history_sample_t s_history[SENSORS_HISTORY_CAPACITY];
+static history_sample_t *s_history;
 static size_t s_history_count = 0;  // valid entries so far, caps at SENSORS_HISTORY_CAPACITY
 static size_t s_history_head = 0;   // index the next push writes to
 static uint32_t s_history_tick = 0;
@@ -283,6 +284,13 @@ static esp_err_t init_mcp9601(void) {
 
 esp_err_t sensors_init(void) {
   s_last_reading_mutex = xSemaphoreCreateMutex();
+#if CONFIG_FLUE_DIAG_HISTORY_RING_INTERNAL
+  s_history = heap_caps_calloc(SENSORS_HISTORY_CAPACITY, sizeof(*s_history), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  ESP_LOGW(TAG, "Diagnostic build: history ring uses internal RAM");
+#else
+  s_history = buffer_memory_calloc(SENSORS_HISTORY_CAPACITY, sizeof(*s_history));
+#endif
+  if (!s_history) ESP_LOGW(TAG, "History allocation failed; sensor sampling remains active");
 
   // The Feather V2's STEMMA QT connector is unpowered until this is driven
   // high -- see config.h's STEMMA_QT_POWER_GPIO comment (also gates the
@@ -340,7 +348,7 @@ void sensors_read(sensor_reading_t *out) {
   // Same plausibility gate as the regression window itself -- a failed or
   // implausible reading just doesn't get a history point this tick, rather
   // than recording a false dip to 0.0C on the 24h graph.
-  if (plausible && (s_history_tick++ % HISTORY_PUSH_EVERY_N) == 0) {
+  if (s_history && plausible && (s_history_tick++ % HISTORY_PUSH_EVERY_N) == 0) {
     s_history[s_history_head] = (history_sample_t){
         .uptime_s = (uint32_t) (esp_timer_get_time() / 1000000),
         .thermocouple_c = out->thermocouple_c,

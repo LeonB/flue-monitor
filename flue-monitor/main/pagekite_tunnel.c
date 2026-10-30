@@ -682,6 +682,11 @@ static void task(void *unused) {
     }
 }
 void pagekite_tunnel_start(void) {
+#if CONFIG_FLUE_DIAG_DISABLE_PAGEKITE
+    set_status(PAGEKITE_STATUS_DISABLED);
+    ESP_LOGW("pagekite", "Diagnostic build: tunnel disabled; saved settings retained");
+    return;
+#endif
     pagekite_settings_t initial;
     settings_get_pagekite(&initial);
     if (!initial.enabled) { set_status(PAGEKITE_STATUS_DISABLED); return; }

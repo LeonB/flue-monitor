@@ -1,5 +1,35 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## PSRAM and automatic light sleep (2026-10-30)
+
+The monitor uses ESP-IDF 5.5.6 and explicit PSRAM-preferred allocations for
+history, global cJSON hooks and asset decompression buffers. Fallback is
+internal byte-addressable RAM; normal malloc and task stacks stay internal.
+Do not switch cJSON hooks after application tasks start. Assets stay in flash.
+Memory telemetry samples internal RAM every 100ms and tracks Sheets activity,
+PSRAM usage, uptime/reset reason and PageKite connection status.
+
+Unpatched 5.5.6 reproduced watchdog resets with Wi-Fi, PSRAM and automatic
+light sleep. cmake/sleep_livelock_backport.cmake applies a SHA-guarded local
+backport of Espressif d45606bf/8220859330 using tools/backport_sleep_livelock.py.
+It suspends the ECO3 cache workaround before stalling the other CPU and
+restores it after release; normal interrupt/RTC watchdog protection stays on.
+Installed SDK files remain untouched; SDK upgrades require reviewing guards.
+Automatic light sleep remains on, IWDT timeout is800ms, I2C/RMT contexts are
+internal via IRAM-safe options. All feature-isolation options default off;
+SDK tracing and the backport intentionally cannot be enabled together.
+
+Validation: firmware build passed. test_sleep_livelock.py checks generated
+watchdog code, locking, both-core feeding and SDK guards. test_history_memory.py
+checks full history, allocator hooks, cleanup and exhausted-buffer503.
+test_compressed_assets.py with miniz-v114 checks actual decompression,
+internal fallback and allocation failure; all passed under sanitizers.
+Patched minimal hardware ran15m17s before intentional USB removal. Full
+firmware deployed with all services enabled; at09:27:39 UTC uptime1110s,
+reset_reason1 (power-on), PageKite connected and one successful Sheets upload.
+The30-minute continuous full-service soak was still pending at commit time;
+these observations do not establish long-term stability.
+
 See the repo root `CLAUDE.md` for the bigger-picture project this is one half
 of, and `README.md` (this folder) for day-to-day build/flash/OTA commands and
 the REST API. This file covers implementation-specific gotchas, most of them

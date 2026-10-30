@@ -3,6 +3,20 @@ CONFIG_IDF_TARGET="esp32"
 CONFIG_LWIP_MAX_SOCKETS=16
 CONFIG_PM_ENABLE=y
 CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_ESP_SLEEP_EVENT_CALLBACKS=y
+# Match ESP-IDF's PSRAM watchdog default explicitly: an existing sdkconfig
+# retains the old non-PSRAM 300 ms value when PSRAM is enabled later.
+CONFIG_ESP_INT_WDT_TIMEOUT_MS=800
+
+# Feather V2: 2 MiB PSRAM. Only explicitly selected data allocations use it;
+# normal malloc, networking, DMA buffers and task stacks stay internal.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_BOOT_INIT=y
+CONFIG_SPIRAM_TYPE_AUTO=y
+CONFIG_SPIRAM_SPEED_40M=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+CONFIG_SPIRAM_MEMTEST=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
 
 # Milestone 4: OTA. Two 1500K app slots (comfortable headroom above the
 # ~984K current build size) instead of one single-app partition -- requires
@@ -30,3 +44,11 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # clients for broadcast.
 CONFIG_HTTPD_WS_SUPPORT=y
 CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y
+
+CONFIG_I2C_ISR_IRAM_SAFE=y
+
+CONFIG_RMT_ISR_IRAM_SAFE=y
+
+# CONFIG_PM_SLP_IRAM_OPT is not set
+
+# CONFIG_ESP_SLEEP_CACHE_SAFE_ASSERTION is not set

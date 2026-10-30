@@ -33,6 +33,14 @@ with tempfile.TemporaryDirectory() as directory:
     if len(sys.argv) < 2:
         sys.exit(0)
     reference = Path(sys.argv[1]).resolve()
+    (tmp / 'esp_heap_caps.h').write_text('''#pragma once
+#include <stddef.h>
+#define MALLOC_CAP_SPIRAM 1
+#define MALLOC_CAP_8BIT 2
+#define MALLOC_CAP_INTERNAL 4
+void *heap_caps_malloc_prefer(size_t, size_t, ...);
+void *heap_caps_calloc_prefer(size_t, size_t, size_t, ...);
+''')
     (tmp / 'miniz.h').write_text('#define MINIZ_HEADER_FILE_ONLY\n#include "' + str(reference) + '"\n')
     (tmp / 'esp_http_server.h').write_text('''#pragma once
 #include <stddef.h>
@@ -54,6 +62,24 @@ int httpd_resp_send_chunk(httpd_req_t *, const char *, size_t);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+#include "esp_heap_caps.h"
+static unsigned preferred_allocations, internal_fallbacks;
+void *heap_caps_malloc_prefer(size_t size,size_t count,...) {
+ va_list args;va_start(args,count);assert(count==2);
+ assert(va_arg(args,int)==(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+ assert(va_arg(args,int)==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));va_end(args);
+ preferred_allocations++;
+ if(getenv("FAIL_ALLOC"))return NULL;
+ if(getenv("NO_PSRAM"))internal_fallbacks++;
+ return malloc(size);
+}
+void *heap_caps_calloc_prefer(size_t count,size_t size,size_t choices,...) {
+ assert(choices==2);
+ void *p=heap_caps_malloc_prefer(count*size,choices,
+   MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+ if(p)memset(p,0,count*size);return p;
+}
 int httpd_req_get_hdr_value_str(httpd_req_t *r,const char *n,char *v,size_t z) {
  if (!r->encoding || strlen(r->encoding)>=z) return -1; strcpy(v,r->encoding); return 0;
 }
@@ -73,6 +99,8 @@ int main(int argc,char **argv) {
  unsigned char *b=malloc(n); assert(fread(b,1,n,f)==n); fclose(f);
  r.fail=argc>3;
  int result=compressed_asset_send_identity(&r,b,n,strtoul(argv[2],NULL,10));free(b);
+ if(n>=18)assert(preferred_allocations==2);
+ if(getenv("NO_PSRAM"))assert(internal_fallbacks==2);
  return result==0 ? 0 : 1;
 }
 ''')
@@ -84,6 +112,11 @@ int main(int argc,char **argv) {
         encoded.write_bytes(gzip.compress(raw, mtime=0))
         result = subprocess.run([str(executable), str(encoded), str(len(raw))], capture_output=True)
         assert result.returncode == 0 and result.stdout == raw, source
+        import os
+        fallback = subprocess.run([str(executable), str(encoded), str(len(raw))], capture_output=True, env={**os.environ, 'NO_PSRAM': '1'})
+        assert fallback.returncode == 0 and fallback.stdout == raw, source
+        exhausted = subprocess.run([str(executable), str(encoded), str(len(raw))], capture_output=True, env={**os.environ, 'FAIL_ALLOC': '1'})
+        assert exhausted.returncode != 0, source
         failure = subprocess.run([str(executable), str(encoded), str(len(raw)), 'disconnect'], capture_output=True)
         assert failure.returncode != 0, source
     encoded.write_bytes(b'bad header')

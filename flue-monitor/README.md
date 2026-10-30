@@ -53,14 +53,39 @@ itself at `/` -- visually verified in a real browser).
   (registered onto `rest_api`'s shared HTTP server -- only one server can
   bind port 80); shared with `../flue-display/` (see the repo root
   `CLAUDE.md`'s "Shared components" section)
-- `activate-idf.sh` — sources the cached ESP-IDF toolchain (same one
-  `flue-display` uses; see `../flue-display/CLAUDE.md` for the one-time setup)
+- `activate-idf.sh` — sources the cached ESP-IDF 5.5.6 toolchain for the monitor;
+  the display retains its separately selected SDK version
 - `ota_flash.sh` — pushes a build to a running device over WiFi
 - `partitions_ota.csv` — two-OTA-slot partition table
 - `google-sheets-logger/` — the Google Apps Script webhook `sheets_logger.c`
   posts to, plus its own setup `README.md`
 
 ## Setup
+
+The monitor enables the Feather V2's 2 MiB PSRAM for history, JSON and asset
+decompression buffers, with internal-RAM fallback if PSRAM is unavailable.
+Task stacks and ordinary malloc allocations remain internal. SDK code that
+explicitly requests generic heap capabilities can still select PSRAM.
+Assets themselves stay in flash. Reading telemetry reports both internal RAM
+and PSRAM usage. An existing sdkconfig with SPIRAM disabled must be updated
+explicitly; sdkconfig.defaults only supplies missing configuration values.
+
+The monitor uses ESP-IDF **5.5.6** with a guarded backport of Espressif's
+[light-sleep/cache-workaround fix](https://github.com/espressif/esp-idf/commit/d45606bf1d450924fbba25eb692ab7d7e27dee77).
+Unpatched 5.5.6 reproduced a watchdog reset in the minimal Wi-Fi/PSRAM test.
+The backport temporarily restores the normal interrupt-watchdog timeout
+while the other CPU is stalled, then reinstates the ECO3 cache workaround.
+Both interrupt and RTC watchdog protection remain enabled. The interrupt
+watchdog is 800 ms; automatic light sleep stays enabled.
+
+`cmake/sleep_livelock_backport.cmake` generates local copies of three SDK
+sources using `tools/backport_sleep_livelock.py`. Installed SDK files are
+untouched. Source hashes deliberately reject an incompatible SDK upgrade;
+review upstream fixes before updating those guards. The generated files keep
+their original object names for linker placement. Temporary feature-isolation
+and SDK-tracing options are disabled in the normal configuration. The sensor
+and LED driver contexts use internal memory via their IRAM-safe options.
+Hardware validation of the backport is in progress; see CLAUDE.md for results.
 
 ```sh
 . ./activate-idf.sh && idf.py build                             # build
@@ -88,6 +113,16 @@ cp main/secrets.h.example main/secrets.h   # first time only -- fill in a real r
 machine that pushes updates.
 
 ## REST API (once connected to WiFi)
+
+Reading responses and device WebSocket readings include a `memory` object
+with internal byte-addressable free RAM, allocator low-water bytes, largest
+free block, and sampled largest-block minima. Sampling runs every 100 ms
+in the existing main task and on Sheets HTTP events, without an extra task.
+Sheets attempt/completion/success counters and PageKite connection state
+help interpret measurements. Byte counts are RAM, not flash. Sampled minima
+can miss shorter peaks; allocator low-water bytes sum the individual heaps'
+historical minima. Zero Sheets minima mean no request has been sampled yet
+(check `sheets_attempts`). These diagnostics do not change API authentication.
 
 ```sh
 curl http://flue-monitor.local/api/reading

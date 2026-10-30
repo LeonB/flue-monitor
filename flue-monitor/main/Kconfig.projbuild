@@ -1,0 +1,39 @@
+menu "Temporary feature isolation diagnostics"
+
+config FLUE_DIAG_TRACE_SDK
+    bool "Instrument local SDK sleep/clock copies (temporary debugging only)"
+    default n
+
+config FLUE_DIAG_DISABLE_PAGEKITE
+    bool "Do not start PageKite (preserve saved configuration)"
+    default n
+
+config FLUE_DIAG_DISABLE_SHEETS
+    bool "Do not start Google Sheets uploads (preserve saved configuration)"
+    default n
+
+config FLUE_DIAG_DISABLE_HTTP
+    bool "Do not start HTTP, WebSocket or OTA (USB recovery required)"
+    default n
+
+config FLUE_DIAG_JSON_INTERNAL
+    bool "Keep JSON allocations in internal RAM"
+    default n
+
+config FLUE_DIAG_SKIP_PSRAM_STATS
+    bool "Do not query live PSRAM heap statistics"
+    default n
+
+config FLUE_DIAG_HISTORY_RING_INTERNAL
+    bool "Keep the temperature history ring in internal RAM"
+    default n
+
+config FLUE_DIAG_HISTORY_API_INTERNAL
+    bool "Keep the history API copy in internal RAM"
+    default n
+
+config FLUE_DIAG_ASSETS_INTERNAL
+    bool "Keep asset decompression buffers in internal RAM"
+    default n
+
+endmenu

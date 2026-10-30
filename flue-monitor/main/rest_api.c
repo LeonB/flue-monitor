@@ -17,10 +17,12 @@
 #include "settings.h"
 #include "dashboard_auth.h"
 #include "pagekite_tunnel.h"
+#include "memory_diagnostics.h"
 #include "sheets_logger.h"
 #include "ws_server.h"
 #include "web_assets_generated.h"
 #include "compressed_assets.h"
+#include "buffer_memory.h"
 
 static const char *TAG = "rest_api";
 
@@ -396,6 +398,7 @@ char *rest_api_reading_json(const sensor_reading_t *r) {
   cJSON_AddNumberToObject(root, "cold_junction_c", round_to(r->cold_junction_c, 0.1));
   cJSON_AddNumberToObject(root, "thermocouple_rate_c_per_min", round_to(r->thermocouple_rate_c_per_min, 0.01));
   cJSON_AddStringToObject(root, "thermocouple_zone", thermocouple_zone_name(r->thermocouple_zone));
+  memory_diagnostics_add_json(root);
 
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
@@ -893,7 +896,15 @@ static esp_err_t history_get_handler(httpd_req_t *req) {
   if (auth_required(req)) return ESP_FAIL;
   uint32_t now_s = (uint32_t) (esp_timer_get_time() / 1000000);
 
-  static history_sample_t samples[SENSORS_HISTORY_CAPACITY];
+#if CONFIG_FLUE_DIAG_HISTORY_API_INTERNAL
+  history_sample_t *samples = heap_caps_malloc(SENSORS_HISTORY_CAPACITY * sizeof(*samples), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#else
+  history_sample_t *samples = buffer_memory_alloc(SENSORS_HISTORY_CAPACITY * sizeof(*samples));
+#endif
+  if (!samples) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_sendstr(req, "History buffer unavailable");
+  }
   size_t sample_count = sensors_get_history(samples, SENSORS_HISTORY_CAPACITY);
 
   cJSON *root = cJSON_CreateObject();
@@ -909,6 +920,7 @@ static esp_err_t history_get_handler(httpd_req_t *req) {
     cJSON_AddItemToArray(samples_json, point);
   }
   cJSON_AddItemToObject(root, "samples", samples_json);
+  free(samples);
 
   cJSON *events_json = cJSON_CreateArray();
   size_t event_start = s_event_log_count < EVENT_LOG_CAPACITY ? 0 : s_event_log_head;

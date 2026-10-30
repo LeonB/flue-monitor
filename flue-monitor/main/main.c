@@ -19,6 +19,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_pm.h"
+#include "esp_sleep.h"
 #include "esp_netif_sntp.h"
 #include "esp_ota_ops.h"
 #include "mdns.h"
@@ -31,6 +32,8 @@
 #include "ota_server.h"
 #include "rest_api.h"
 #include "pagekite_tunnel.h"
+#include "memory_diagnostics.h"
+#include "sleep_diagnostics.h"
 #include "secrets.h"
 #include "sensors.h"
 #include "settings.h"
@@ -38,6 +41,7 @@
 #include "status_led.h"
 #include "wifi_setup.h"
 #include "ws_server.h"
+#include "buffer_memory.h"
 
 static const char *TAG = "main";
 
@@ -75,8 +79,12 @@ static void sensor_log_task(void *arg) {
     // Diagnostic for chasing an apparent REST API hang (see CLAUDE.md) --
     // a no-op until rest_api_start() has run. Piggybacking this task's own
     // cadence rather than a dedicated timer.
-    if (diagnostic_ticks++ % (30000 / SENSOR_READ_INTERVAL_MS) == 0)
+    if (diagnostic_ticks++ % (30000 / SENSOR_READ_INTERVAL_MS) == 0) {
       rest_api_log_socket_usage();
+#if CONFIG_FLUE_DIAG_TRACE_SDK
+      sleep_diagnostics_log();
+#endif
+    }
 
     xTaskDelayUntil(&next_read, pdMS_TO_TICKS(SENSOR_READ_INTERVAL_MS));
   }
@@ -114,8 +122,14 @@ static void start_sntp(void) {
 }
 
 static void configure_power_management(void) {
-  // WiFi already uses modem power save by default. Automatic light sleep
-  // lets the CPU and radio sleep between sensor samples and network work.
+  // ESP32 erratum RTC-126 (including revision 3.1): RTC register reads can
+  // fail after light sleep if RTC peripherals were powered down. Keep this
+  // domain on as Espressif recommends; automatic CPU light sleep stays on.
+  // https://docs.espressif.com/projects/esp-chip-errata/en/latest/esp32/03-errata-description/index.html#rtc-126-rtc-register-read-error-after-wake-up-from-light-sleep-mode
+  ESP_ERROR_CHECK(esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON));
+  ESP_LOGI(TAG, "RTC-126 workaround: keeping RTC peripherals powered during light sleep");
+  ESP_LOGI(TAG, "Interrupt watchdog: %d ms; FreeRTOS tick: %d Hz",
+           CONFIG_ESP_INT_WDT_TIMEOUT_MS, CONFIG_FREERTOS_HZ);
   const esp_pm_config_t config = {
       .max_freq_mhz = 240,
       .min_freq_mhz = 80,
@@ -133,7 +147,25 @@ static void configure_power_management(void) {
   }
 }
 
+#if CONFIG_FLUE_DIAG_JSON_INTERNAL
+static void *json_internal_alloc(size_t size) {
+  return heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+#endif
+
 void app_main(void) {
+#if CONFIG_FLUE_DIAG_TRACE_SDK
+  sleep_diagnostics_init();
+#endif
+  // Install once before any application tasks/JSON allocations. All users
+  // share these hooks; never switch allocators around an individual request.
+#if CONFIG_FLUE_DIAG_JSON_INTERNAL
+  cJSON_Hooks json_hooks = {.malloc_fn = json_internal_alloc, .free_fn = free};
+  ESP_LOGW(TAG, "Diagnostic build: JSON allocations use internal RAM");
+#else
+  cJSON_Hooks json_hooks = {.malloc_fn = buffer_memory_alloc, .free_fn = free};
+#endif
+  cJSON_InitHooks(&json_hooks);
   init_nvs();
   settings_init();
   ESP_ERROR_CHECK(esp_netif_init());
@@ -178,15 +210,19 @@ void app_main(void) {
 
     start_mdns();
     start_sntp();
+#if CONFIG_FLUE_DIAG_DISABLE_HTTP
+    ESP_LOGW(TAG, "Diagnostic build: HTTP/WebSocket/OTA disabled; use USB for recovery");
+#else
     httpd_handle_t server = rest_api_start();
     ota_server_register(server, OTA_SECRET);
     ws_server_register(server);
+#endif
     sheets_logger_init();
     pagekite_tunnel_start();
 
     while (true) {
-      vTaskDelay(pdMS_TO_TICKS(10000));
-      ESP_LOGI(TAG, "(still connected, idling -- sensor_log_task has the actual readings)");
+      memory_diagnostics_sample();
+      vTaskDelay(pdMS_TO_TICKS(100));
     }
   } else {
     if (have_creds) {

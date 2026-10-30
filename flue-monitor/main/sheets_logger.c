@@ -15,6 +15,7 @@
 
 #include "sensors.h"
 #include "settings.h"
+#include "memory_diagnostics.h"
 
 static const char *TAG = "sheets_logger";
 
@@ -54,6 +55,7 @@ static char s_webhook_response_buf[WEBHOOK_RESPONSE_BUF_SIZE];
 static int s_webhook_response_len;
 
 static esp_err_t webhook_http_event_handler(esp_http_client_event_t *evt) {
+  memory_diagnostics_sample();
   if (evt->event_id == HTTP_EVENT_ON_CONNECTED) {
     // A fresh transport connection means a fresh response is starting --
     // reset here, per hop, rather than once before the whole (possibly
@@ -180,6 +182,7 @@ static bool log_to_sheets(const sensor_reading_t *reading, const settings_t *set
       .crt_bundle_attach = esp_crt_bundle_attach,
   };
   esp_http_client_handle_t client = esp_http_client_init(&config);
+  memory_diagnostics_sheets_begin();
   esp_err_t err = esp_http_client_perform(client);
   // ESP_OK only means the HTTP exchange completed -- Code.gs answers with a
   // plain HTTP 200 even when it rejects the request (a wrong secret returns
@@ -204,11 +207,16 @@ static bool log_to_sheets(const sensor_reading_t *reading, const settings_t *set
   } else {
     ESP_LOGI(TAG, "Logged to Google Sheets (event=%s, status=%d)", event, esp_http_client_get_status_code(client));
   }
+  memory_diagnostics_sheets_end(ok);
   esp_http_client_cleanup(client);
   return ok;
 }
 
 bool sheets_logger_log_event(const char *event) {
+#if CONFIG_FLUE_DIAG_DISABLE_SHEETS
+  (void)event;
+  return false;
+#endif
   queued_event_t item = {0};
   strlcpy(item.label, event, sizeof(item.label));
   // Captured now, synchronously, at the moment of the actual tap -- not
@@ -288,6 +296,10 @@ static void sheets_logger_task(void *arg) {
 }
 
 void sheets_logger_init(void) {
+#if CONFIG_FLUE_DIAG_DISABLE_SHEETS
+  ESP_LOGW(TAG, "Diagnostic build: uploads disabled; saved settings retained");
+  return;
+#endif
   s_event_queue = xQueueCreate(4, sizeof(queued_event_t));
   // HTTPS/TLS uses substantial stack while the logger's local request buffers
   // and settings snapshot are live. The previous 6 KiB stack overflowed during
