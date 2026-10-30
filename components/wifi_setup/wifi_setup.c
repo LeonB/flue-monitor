@@ -179,6 +179,10 @@ bool wifi_sta_try_connect(const char *ssid, const char *pass, uint32_t timeout_m
   ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &sta_event_handler, NULL, &ip_handler));
 
   wifi_config_t wifi_config = {0};
+  // Multiple APs advertise this SSID. Fast scan can stop at a weak AP
+  // before discovering a nearby one, causing beacon timeouts after joining.
+  wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+  wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
   strlcpy((char *) wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid));
   strlcpy((char *) wifi_config.sta.password, pass, sizeof(wifi_config.sta.password));
 
@@ -231,6 +235,8 @@ bool wifi_sta_test_connect(const char *ssid, const char *pass, uint32_t timeout_
   ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &sta_event_handler, NULL, &ip_handler));
 
   wifi_config_t wifi_config = {0};
+  wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+  wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
   strlcpy((char *) wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid));
   strlcpy((char *) wifi_config.sta.password, pass, sizeof(wifi_config.sta.password));
   ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));

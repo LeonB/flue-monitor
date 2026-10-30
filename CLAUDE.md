@@ -60,6 +60,13 @@ still what tells you which physical device you're configuring -- the
 portal's own page (`components/captive_portal/root.html`) deliberately
 doesn't brand itself by device name, since it's shared.
 
+Station connections now use `WIFI_ALL_CHANNEL_SCAN` and
+`WIFI_CONNECT_AP_BY_SIGNAL` in both normal boot and captive-portal test-connect.
+Several APs advertise the same SSID; the former fast scan could stop at a weak
+AP before finding a nearby one. On 2026-10-29 the monitor joined at -79 dBm
+and logged beacon timeouts; all-channel selection chose a different AP at
+-52 dBm. This is selection at connection time, not a new roaming policy.
+
 Not shared (deliberately): `status_led.c` (genuinely different hardware --
 flue-display drives a plain GPIO status LED, flue-monitor drives a NeoPixel --
 not just different code for the same job) and the LED-ring zone-color/pulse
