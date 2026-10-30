@@ -114,19 +114,28 @@ void settings_init(void) {
 
   nvs_handle_t handle;
   if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
-    settings_t from_nvs = loaded;
-    size_t len = sizeof(from_nvs);
+    // The reverted panel-calibration firmware appended four or five 32-bit
+    // fields. Read its known tail too, then retain the unchanged prefix.
+    // Merely reducing the read buffer makes nvs_get_blob reject the whole
+    // blob and silently disables saved Sheets/PageKite configuration.
+    struct {
+      settings_t prefix;
+      uint32_t removed_panel_fields[5];
+    } stored = {.prefix = loaded};
+    size_t len = sizeof(stored);
     // Earlier layouts are unchanged prefixes (before colours, shape, or
     // minimum brightness). Seed missing tail fields while retaining old values.
-    if (nvs_get_blob(handle, NVS_KEY_BLOB, &from_nvs, &len) == ESP_OK &&
-        (len == sizeof(from_nvs) ||
+    if (nvs_get_blob(handle, NVS_KEY_BLOB, &stored, &len) == ESP_OK &&
+        (len == sizeof(settings_t) ||
+         len == sizeof(settings_t) + 4 * sizeof(uint32_t) ||
+         len == sizeof(stored) ||
          len == offsetof(settings_t, pagekite) + offsetof(pagekite_settings_t, custom_domain) ||
          len == offsetof(settings_t, zone_cold_color) ||
          len == offsetof(settings_t, breathing_exponent) ||
          len == offsetof(settings_t, maximum_brightness) ||
          len == offsetof(settings_t, pagekite)) &&
-        validate(&from_nvs)) {
-      loaded = from_nvs;
+        validate(&stored.prefix)) {
+      loaded = stored.prefix;
       ESP_LOGI(TAG, "Loaded settings from NVS");
     } else {
       ESP_LOGI(TAG, "No usable settings in NVS yet -- using compile-time defaults");

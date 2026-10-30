@@ -92,6 +92,23 @@ int main(void) {
  settings_t legacy;set_defaults(&legacy);legacy.pagekite.enabled=1;strcpy(legacy.pagekite.domain,"demo.pagekite.me");strcpy(legacy.pagekite.secret,"test-private-secret");
  stored_len=offsetof(settings_t,pagekite)+offsetof(pagekite_settings_t,custom_domain);memcpy(stored,&legacy,stored_len);
  settings_init();settings_get(&current);assert(current.pagekite.enabled && !strcmp(current.pagekite.domain,"demo.pagekite.me") && !strcmp(current.pagekite.secret,"test-private-secret") && !*current.pagekite.custom_domain);
+ // Rolling back panel calibration must retain all existing settings/secrets.
+ struct {settings_t prefix;uint32_t tail[6];} panel={.prefix=legacy};
+ strcpy(panel.prefix.google_sheets_webhook_url,"https://example.invalid/sheets");
+ strcpy(panel.prefix.google_sheets_secret,"saved-sheets-secret");
+ size_t panel_sizes[]={sizeof(settings_t)+16,sizeof(settings_t)+20};
+ for(size_t i=0;i<sizeof panel_sizes/sizeof panel_sizes[0];i++){
+  stored_len=panel_sizes[i];memcpy(stored,&panel,stored_len);unsigned before=writes;
+  settings_init();settings_get(&current);
+  assert(!memcmp(&current,&panel.prefix,sizeof current) && writes==before);
+  assert(stored_len==panel_sizes[i] && !memcmp(stored,&panel,stored_len));
+ }
+ stored_len=sizeof(settings_t)+12;memcpy(stored,&panel,stored_len);
+ settings_init();settings_get(&current);assert(!current.pagekite.enabled);
+ stored_len=sizeof(settings_t)+24;memcpy(stored,&panel,stored_len);
+ settings_init();settings_get(&current);assert(!current.pagekite.enabled);
+ stored_len=sizeof legacy;memcpy(stored,&legacy,stored_len);settings_init();settings_get(&current);
+ puts("PASS reverted panel layouts retain exact prefix and credentials without rewriting NVS; unknown tails rejected");
  memset(&current.pagekite,0,sizeof current.pagekite);current.pagekite.enabled=1;assert(settings_set(&current)==ESP_ERR_INVALID_ARG);
  strcpy(current.pagekite.domain,"demo.pagekite.me");strcpy(current.pagekite.secret,"test-private-secret");strcpy(current.pagekite.custom_domain,"flumonitor.example.nl");assert(settings_set(&current)==ESP_OK);
  settings_init();settings_get(&current);assert(current.pagekite.enabled && !strcmp(current.pagekite.secret,"test-private-secret"));
