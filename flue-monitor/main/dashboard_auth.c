@@ -6,8 +6,7 @@
 #include "esp_random.h"
 #include "lwip/sockets.h"
 #include "esp_timer.h"
-#include "mbedtls/md.h"
-#include "mbedtls/pkcs5.h"
+#include "psa/crypto.h"
 #include "nvs.h"
 
 #define AUTH_NAMESPACE "dashboard_auth"
@@ -48,13 +47,20 @@ static unsigned s_failed_logins;
 static int64_t s_login_lockout_until_us;
 
 static bool derive(const char *password, const uint8_t salt[16], uint8_t out[32]) {
-  if (mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256,
-      (const unsigned char *)password, strlen(password), salt, 16,
-      AUTH_PBKDF2_ROUNDS, 32, out) != 0) {
-    memset(out, 0, 32);
-    return false;
-  }
-  return true;
+  psa_key_derivation_operation_t operation = PSA_KEY_DERIVATION_OPERATION_INIT;
+  psa_status_t status = psa_key_derivation_setup(&operation, PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256));
+  if (status == PSA_SUCCESS)
+    status = psa_key_derivation_input_integer(&operation, PSA_KEY_DERIVATION_INPUT_COST, AUTH_PBKDF2_ROUNDS);
+  if (status == PSA_SUCCESS)
+    status = psa_key_derivation_input_bytes(&operation, PSA_KEY_DERIVATION_INPUT_SALT, salt, 16);
+  if (status == PSA_SUCCESS)
+    status = psa_key_derivation_input_bytes(&operation, PSA_KEY_DERIVATION_INPUT_PASSWORD,
+                                           (const unsigned char *)password, strlen(password));
+  if (status == PSA_SUCCESS)
+    status = psa_key_derivation_output_bytes(&operation, out, 32);
+  psa_key_derivation_abort(&operation);
+  if (status != PSA_SUCCESS) memset(out, 0, 32);
+  return status == PSA_SUCCESS;
 }
 
 static bool equal_secret(const uint8_t *a, const uint8_t *b, size_t n) {

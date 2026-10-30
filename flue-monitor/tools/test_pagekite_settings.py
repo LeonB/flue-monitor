@@ -10,7 +10,9 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 idf = Path(json.loads((root / 'build/project_description.json').read_text())['idf_path'])
-cjson = idf / 'components/json/cJSON'
+cjson = root / 'managed_components/espressif__cjson/cJSON'
+if not cjson.exists():
+    cjson = idf / 'components/json/cJSON'
 header = (root / 'main/settings.h').read_text().replace('#pragma once', '').replace('#include "esp_err.h"', '')
 config = (root / 'main/config.h').read_text().replace('#pragma once', '')
 settings = re.sub(r'^#include .*$','', (root / 'main/settings.c').read_text(), flags=re.M)

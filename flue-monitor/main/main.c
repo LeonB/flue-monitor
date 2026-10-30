@@ -33,7 +33,6 @@
 #include "rest_api.h"
 #include "pagekite_tunnel.h"
 #include "memory_diagnostics.h"
-#include "sleep_diagnostics.h"
 #include "secrets.h"
 #include "sensors.h"
 #include "settings.h"
@@ -81,9 +80,6 @@ static void sensor_log_task(void *arg) {
     // cadence rather than a dedicated timer.
     if (diagnostic_ticks++ % (30000 / SENSOR_READ_INTERVAL_MS) == 0) {
       rest_api_log_socket_usage();
-#if CONFIG_FLUE_DIAG_TRACE_SDK
-      sleep_diagnostics_log();
-#endif
     }
 
     xTaskDelayUntil(&next_read, pdMS_TO_TICKS(SENSOR_READ_INTERVAL_MS));
@@ -154,9 +150,6 @@ static void *json_internal_alloc(size_t size) {
 #endif
 
 void app_main(void) {
-#if CONFIG_FLUE_DIAG_TRACE_SDK
-  sleep_diagnostics_init();
-#endif
   // Install once before any application tasks/JSON allocations. All users
   // share these hooks; never switch allocators around an individual request.
 #if CONFIG_FLUE_DIAG_JSON_INTERNAL

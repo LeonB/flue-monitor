@@ -53,7 +53,7 @@ itself at `/` -- visually verified in a real browser).
   (registered onto `rest_api`'s shared HTTP server -- only one server can
   bind port 80); shared with `../flue-display/` (see the repo root
   `CLAUDE.md`'s "Shared components" section)
-- `activate-idf.sh` — sources the cached ESP-IDF 5.5.6 toolchain for the monitor;
+- `activate-idf.sh` — sources the cached ESP-IDF 6.0.3 toolchain for the monitor;
   the display retains its separately selected SDK version
 - `ota_flash.sh` — pushes a build to a running device over WiFi
 - `partitions_ota.csv` — two-OTA-slot partition table
@@ -70,22 +70,16 @@ Assets themselves stay in flash. Reading telemetry reports both internal RAM
 and PSRAM usage. An existing sdkconfig with SPIRAM disabled must be updated
 explicitly; sdkconfig.defaults only supplies missing configuration values.
 
-The monitor uses ESP-IDF **5.5.6** with a guarded backport of Espressif's
+The monitor uses ESP-IDF **6.0.3**, which includes Espressif's
 [light-sleep/cache-workaround fix](https://github.com/espressif/esp-idf/commit/d45606bf1d450924fbba25eb692ab7d7e27dee77).
-Unpatched 5.5.6 reproduced a watchdog reset in the minimal Wi-Fi/PSRAM test.
-The backport temporarily restores the normal interrupt-watchdog timeout
-while the other CPU is stalled, then reinstates the ECO3 cache workaround.
+The previous custom 5.5.6 backport and SDK tracing copies are removed.
 Both interrupt and RTC watchdog protection remain enabled. The interrupt
-watchdog is 800 ms; automatic light sleep stays enabled.
-
-`cmake/sleep_livelock_backport.cmake` generates local copies of three SDK
-sources using `tools/backport_sleep_livelock.py`. Installed SDK files are
-untouched. Source hashes deliberately reject an incompatible SDK upgrade;
-review upstream fixes before updating those guards. The generated files keep
-their original object names for linker placement. Temporary feature-isolation
-and SDK-tracing options are disabled in the normal configuration. The sensor
-and LED driver contexts use internal memory via their IRAM-safe options.
-Hardware validation of the backport is in progress; see CLAUDE.md for results.
+watchdog is 800 ms; automatic light sleep stays enabled. Feature-isolation
+options default off. Sensor and LED driver contexts use internal memory via
+their IRAM-safe options. A 30-minute full-feature hardware test passed with
+PSRAM and automatic light sleep enabled, live sensor/display data, a confirmed
+Sheets upload and 175 successful LAN/public web requests. This bounded test
+does not establish long-term stability; see CLAUDE.md for measured results.
 
 ```sh
 . ./activate-idf.sh && idf.py build                             # build

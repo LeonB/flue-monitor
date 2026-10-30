@@ -1,4 +1,6 @@
 dependencies:
+  idf: ">=6.0.3,<6.1"
+  espressif/cjson: "^1.7.19"
   espressif/mdns: ">=1.0.0"
   espressif/led_strip: ">=2.5.0"
   esp-idf-lib/i2cdev: "*"

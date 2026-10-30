@@ -1,34 +1,553 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
-## PSRAM and automatic light sleep (2026-10-30)
+## 2026-10-30 official ESP-IDF 6.0.3 migration (30-minute full-feature soak passed)
 
-The monitor uses ESP-IDF 5.5.6 and explicit PSRAM-preferred allocations for
-history, global cJSON hooks and asset decompression buffers. Fallback is
-internal byte-addressable RAM; normal malloc and task stacks stay internal.
-Do not switch cJSON hooks after application tasks start. Assets stay in flash.
-Memory telemetry samples internal RAM every 100ms and tracks Sheets activity,
-PSRAM usage, uptime/reset reason and PageKite connection status.
+User requested 6.0.3 with all features. Official SDK installed alongside old
+versions; activate-idf.sh and manifest select6.0.3. Removed custom5.5.6 sleep
+backport and obsolete trace wrappers; SDK source diff is empty. cJSON now
+comes from espressif/cjson1.7.19~2, with conditional shared portal dependency
+so display5.5.5 still builds. PBKDF2/SHA1 calls use PSA APIs, preserving
+credential/signature formats. Actual TF-PSA host-library known-vector checks
+pass for credential hashing, relay auth and DDNS (tools/test_psa_crypto.py).
+Auth/history/settings/assets/PageKite host regressions pass. Display builds.
+Full monitor binary0x172060 (1515616 bytes),20384 bytes free in OTA slot.
+PSRAM2MiB, automatic light sleep,800ms IWDT, all services and all full roots
+remain enabled; no feature isolation, custom SDK patch or size optimization.
+OTA to confirmed .137/MAC8c:94:df:0b:be:fc succeeded. Final boot about
+10:05:01 UTC; WS confirmsv6.0.3 and light_sleep_enabled=true, real thermocouple
+and PageKite. Earlier first6.0.3 trial boot at10:01 was deliberately replaced
+at10:05 to add runtime sleep configuration telemetry, NOT a watchdog reset.
+Display passive log confirms received measurements and settings acknowledgement.
+Saved dashboard password remains configured; owner-authenticated dashboard
+interaction is not tested (no password/session available).
+Soak logs /tmp/flue-idf603/{telemetry.jsonl,web-soak.jsonl,display.log}.
+At10:35:03 UTC, final-build uptime1806s with no unexpected reset. All telemetry
+samples report light_sleep_enabled=true; sensor and PageKite remain active.
+175 post-reboot web requests succeeded, alternating LAN/public and gzip/identity.
+Only earlier request failure overlapped the intentional OTA reboot. Large startup
+asset bytes, immutable caching and304 validated separately. Seven held HTTP
+sessions plus ten abrupt WS disconnects leave server available. Display mid-soak
+logs real23.5-23.6C readings, current settings acknowledgement and zero LED
+refresh failures. One Sheets upload received the actual webhook "ok" response;
+saved heartbeat is60min, so one is expected in this30min run.21 comparable
+saved settings match earlier snapshot. Internal minimum55144 bytes, steady free
+about111532 bytes. This passes a bounded30min test, not proof against future
+long-delayed resets. Final binary SHA256:
+5a71aa673a04031fd294b26ce43c6b6c9fd6f8db1056a2ad7028c299be4df0e6.
+Activation script selects installed Python3.14 environment despite Homebrew3.15;
+fresh-shell idf.py --version reportsv6.0.3.
 
-Unpatched 5.5.6 reproduced watchdog resets with Wi-Fi, PSRAM and automatic
-light sleep. cmake/sleep_livelock_backport.cmake applies a SHA-guarded local
-backport of Espressif d45606bf/8220859330 using tools/backport_sleep_livelock.py.
-It suspends the ECO3 cache workaround before stalling the other CPU and
-restores it after release; normal interrupt/RTC watchdog protection stays on.
-Installed SDK files remain untouched; SDK upgrades require reviewing guards.
-Automatic light sleep remains on, IWDT timeout is800ms, I2C/RMT contexts are
-internal via IRAM-safe options. All feature-isolation options default off;
-SDK tracing and the backport intentionally cannot be enabled together.
 
-Validation: firmware build passed. test_sleep_livelock.py checks generated
-watchdog code, locking, both-core feeding and SDK guards. test_history_memory.py
-checks full history, allocator hooks, cleanup and exhausted-buffer503.
-test_compressed_assets.py with miniz-v114 checks actual decompression,
-internal fallback and allocation failure; all passed under sanitizers.
-Patched minimal hardware ran15m17s before intentional USB removal. Full
-firmware deployed with all services enabled; at09:27:39 UTC uptime1110s,
-reset_reason1 (power-on), PageKite connected and one successful Sheets upload.
-The30-minute continuous full-service soak was still pending at commit time;
-these observations do not establish long-term stability.
+## 2026-10-30 upstream PSRAM/light-sleep research (no firmware changes)
+
+- d45606bf1d450924fbba25eb692ab7d7e27dee77 and parent6f1bea6a move the
+  ECO3 watchdog back to its regular timeout while the other CPU is stalled.
+  Merge8220859330 references internal IDFCI-7791 / MR45645; no public issue
+  reproduction obtained. Our patch uses equivalent light-sleep call ordering.
+- afbe171f481c777a13d72b626a427b123dc77f73 (July2026, PM-814) corrects lock
+  ordering for DEEP sleep, not an additional missing light-sleep change.
+- d4e3109c1b9c31f43c6f44d02c64e58878a46ed8 / merge344edcd13f37c5806f9559aca93bc4e99e1c3931
+  (PM-779) changes critical-section handling during sleep using
+  xPortThreadSafeClaim/Disclaim, also changes esp_timer lock order. Separate
+  possible investigation lead, NOT established cause or safe standalone backport.
+- Official raw sleep_modes.c tags checked: v5.5.6 lacks cache-sleep helper;
+  v6.0.3 and v6.1 contain it. Neither inspected release contains the thread-safe
+  claim calls; both retain IDF-5257 lock warning. An official6.x minimal A/B
+  would remove our custom backport as a variable, not guarantee a fix.
+- Issue11315 reports same PICO-V3-02 family and long-delayed RTC watchdogs,
+  but with Bluetooth. Suggested XTAL wait/idle threshold changes did not solve
+  original report; closed for lack of feedback, not confirmed fixed.
+- Generic PSRAM power fixes2ceddff9 and29b51468 only change ESP32-P4 files.
+  Not applicable to our ESP32. Half-sleep config is enabled but the ESP32
+  PSRAM enter/exit/resume functions are empty stubs: not a useful first toggle.
+- Actual config already has PSRAM/flash CS pullups, internal stacks,800ms IWDT,
+  100Hz tick,40MHz PSRAM and IRAM panic handler; core dumps disabled.
+  Auto light sleep with Wi-Fi is explicitly supported; manual sleep advice
+  to stop radios does not apply to our power-management setup.
+Sources: https://github.com/espressif/esp-idf/commit/d45606bf1d450924fbba25eb692ab7d7e27dee77
+https://github.com/espressif/esp-idf/commit/afbe171f481c777a13d72b626a427b123dc77f73
+https://github.com/espressif/esp-idf/commit/d4e3109c1b9c31f43c6f44d02c64e58878a46ed8
+https://github.com/espressif/esp-idf/issues/11315
+https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/sleep_modes.html
+
+
+## 2026-10-30 full PSRAM soak FAILED after about23.5min
+
+Telemetry at09:33:14 UTC reports uptime30/reset_reason5 (interrupt watchdog),
+following last observed uptime1408s. Thus the full patched firmware has NOT
+passed its30min soak; commit5963670 is not evidence of a complete fix.
+Current deployed monitor remains the full PSRAM/light-sleep build541b1d5cc.
+Continue diagnosis after completing the separately requested display update.
+Evidence: /tmp/flue-sleep-ab/telemetry.jsonl. No automatic rollback performed.
+
+
+## 2026-10-30 smaller app icons (built, not flashed)
+
+Manifest now lists the existing stove SVG with sizes:any after PNG fallbacks.
+Existing SVG route, MIME type, public PageKite access and asset versioning are
+reused. Apple 180px and manifest 192/512px PNGs retain dimensions and are
+palette encoded with ImageMagick (+dither -colors 256, PNG8, compression9).
+Gzipped PNG total shrank from56187 to21352 bytes. Visual512px inspection
+passed; normalized RMSE0.001561. Existing startup images and favicon unchanged.
+Actual normal-config firmware1510096 ->1475296 bytes:34800 saved;60704 free
+in OTA slot. Build and test_asset_versions.py passed. NOT flashed during
+ongoing PSRAM/light-sleep stability soak; deployed image remains541b1d5cc.
+Pre-change binary and PNGs preserved at /tmp/flue-icons-before.
+Alpine already minified3.17.4,55891 raw bytes,about19.5KiB gzip, shared once
+between portal and dashboard. No Alpine changes made.
+
+## 2026-10-30 size exploration while stability soak runs
+
+User asked to think about reducing firmware size. Separate, NOT FLASHED,
+build-size-experiment uses /tmp/flue-sleep-ab/size-experiment.sdkconfig,
+changing compiler DEBUG optimization to SIZE only. Measured binaries:
+normal1510096 bytes; size1377984; saving132112 bytes (8.7%,129KiB).
+OTA-slot free space25904 ->158016 bytes. Current normal sdkconfig/build
+and deployed firmware retain DEBUG optimization to avoid confounding soak.
+Do not claim size build runtime-tested. Assets from ELF: gzip payloads198306
+bytes total, startup PNGs60826, icons60470; embedded fonts55168 bytes;
+full root certificate bundle68983 bytes. These are occupied sizes, not
+promised savings. Compiler optimization is first candidate; certificate
+reduction must preserve verification and Google/PageKite trust paths.
+
+USB reader93341 ended Device not configured after09:08:58 UTC. Wifi
+reconnected at09:09:31 uptime20 reset_reason1 (power-on, not watchdog).
+Soak start for uninterrupted full run is approximately09:09:11 UTC;
+continue through09:39:11 or later. Telemetry7042 remains active via Wi-Fi.
+Public identity/gzip loading HTML and font matched local source bytes.
+
+
+## 2026-10-30 full patched firmware deployed (latest; soak running)
+
+User reconnected actual CH9102 monitor. Full flue-monitor/build/flue-monitor.bin
+written to active0x20000, chip/MAC confirmed, hash verified. Intentional
+POWERON 09:07:47 UTC; app ELF541b1d5cc SDK5.5.6,2MiB PSRAM and automatic
+light sleep ON confirmed. Full services restored: LAN/public root HTTP200,
+PageKite authenticated, real MCP9601 readings, first Sheets upload success.
+Saved settings match /tmp/flue-watchdog800-settings.json except randomized
+settings_revision. No longer minimal firmware: OTA/network monitoring available.
+USB reader93341, wifi telemetry7042 (measure-long.cjs -> telemetry.jsonl).
+Continue >=30min since09:07:47 and check monotonic uptime, no resets, real
+Sheets successes, public responses/asset decoding, then record final result.
+User may disconnect USB for work; wifi now sufficient if monitor stays powered.
+Do not confuse USB removal/power reset with watchdog. No commits/push.
+
+
+## 2026-10-30 patched trial interrupted by USB removal (latest)
+
+User reconnected monitor; correct CH9102 /dev/cu.usbserial-5C671828951
+returned. Patched minimal boot 08:45:01 UTC, ELF c0f9acbd9, SDK5.5.6,
+2MiB PSRAM + Wi-Fi + automatic light sleep confirmed. Logs continued
+without watchdog reset through 09:00:18 UTC (15m17s). Reader session14433
+then exited with Device not configured. At 09:01:28 inventory showed only
+CH340 /dev/cu.usbserial-21130 again (previously identified other board
+MAC84:0d:8e:d2:a6:ec). NOT proof of a watchdog failure. User asked to
+reconnect monitor and leave it attached; async answer pending. Do not flash
+other board. Monitor still has minimal patched firmware, no HTTP/OTA.
+
+During soak, production CMake now includes cmake/sleep_livelock_backport.cmake;
+activate-idf.sh selects5.5.6; sdkconfig copied from all-services-on candidate
+(PSRAM on, all FLUE_DIAG off, PM_SLP_IRAM_OPT/cache assertion off, I2C/RMT
+IRAM-safe on). Defaults explicitly retain those driver settings. Old build
+archived at /tmp/flue-sleep-ab/monitor-build-before-556-final. Fresh normal
+flue-monitor/build succeeds, image0x170b10 (2% slot headroom). Generated
+watchdog helper/reconfigure/chip predicate confirmed IRAM. New test
+ tools/test_sleep_livelock.py compiles actual generated functions with
+ASan/UBSan register stubs; both-core feeding,20ms/800ms stage switching,
+1600ms reset stage, locking and changed-SDK rejection pass. README updated
+with backport explanation, explicitly hardware validation in progress.
+No full patched firmware flashed yet. Full built candidate ready at
+flue-monitor/build/flue-monitor.bin. Next after monitor reconnect: deploy
+full candidate so network monitoring/OTA are available again, then >=30min
+with real sensor/Sheets/PageKite/PSRAM telemetry and public assets. Minimal
+15m17s clean is encouraging but not a completed30min proof; report honestly.
+Restore /tmp/flue-sleep-ab/off/flue-monitor.bin if candidate fails. Do not
+leave minimal firmware when completing task. No source commits/push.
+
+
+## 2026-10-30 ESP-IDF 5.5.6 and sleep backport — awaiting monitor USB
+
+User requested fixing PSRAM/light sleep, then suggested 5.5.6. Official
+5.5.6 installed alongside 5.5.5 at the existing SDK cache frameworks/5.5.6;
+required tools installed with idf_tools.py --targets esp32. Existing project
+activate-idf.sh still selects 5.5.5: do not claim upgrade finalized.
+Plain 5.5.6 minimal Wi-Fi/PSRAM/sensor/light-sleep build passed compilation
+but reset TG1 at 08:13:01 UTC after POWERON 08:10:02 (2m59s), then again
+08:15:52. Snapshot /tmp/flue-sleep-ab/minimal-5.5.6. Full unpatched monitor
+also builds (repo-root build-5.5.6; SDKCONFIG=/tmp/flue-sleep-ab/full-5.5.6.sdkconfig),
+not flashed; dependencies.lock now records IDF 5.5.6.
+
+New tools/backport_sleep_livelock.py and cmake/sleep_livelock_backport.cmake
+adapt upstream d45606bf + 8220859330 to the exact SHA-guarded 5.5.6 sources.
+Installed SDK untouched; generated sources retain basenames/linker rules.
+Backport changes only light sleep, suspends ECO3 workaround before CPU stall
+and restores after release, serializes tick/helper WDT configuration and
+places helper/chip-info code in IRAM. Does NOT disable either watchdog.
+Included only by temporary minimal/main/CMakeLists.txt so far; production
+main/CMakeLists.txt does NOT yet include it. Build passed after adding stdbool.
+NM confirms helper/reconfigure/chip predicate at 0x4008... . Normal sleep
+entry remains flash just as unpatched baseline (PM_SLP_IRAM_OPT=n).
+Patched snapshot: /tmp/flue-sleep-ab/minimal-5.5.6-patched.
+
+Patched minimal was flashed to confirmed monitor MAC 8c:94:df:0b:be:fc,
+active app 0x20000; esptool completed hash verification. Subsequent USB
+reader failed: /dev/cu.usbserial-5C671828951 disappeared. Inventory now only
+/dev/cu.usbserial-21130 (CH340), read_mac positively identified DIFFERENT
+ESP32-D0WD rev1 MAC 84:0d:8e:d2:a6:ec. That board bootloops; no firmware
+was written to it. User asked to reconnect actual monitor, async question
+pending. Monitor currently has minimal patched firmware, no HTTP/OTA,
+so USB is required to validate and restore complete firmware. Do not end
+claiming fixed/restored. Earlier full recovery binary remains off/flue-monitor.bin.
+No patched run duration has been observed yet. Next: identify monitor USB,
+run patched minimal >=30min; then integrate/build/flash full app with PSRAM
+and automatic light sleep, all services, test >=30min plus real Sheets and
+LAN/public responses. If failure/block, restore full PSRAM-off firmware via
+confirmed monitor USB. Remove/disable temporary diagnostics for normal build.
+
+
+## 2026-10-30 Wi-Fi A/B experiment results
+
+Minimal sensor + Wi-Fi with normal SDK sleep path reset at 00:52:50 UTC,
+5m10s after intentional POWERON 00:47:40. User authorized Wi-Fi off/on
+comparison (30 minutes each unless reset earlier), repeated, plus online
+bug research. Temporary minimal project now has CONFIG_MINIMAL_WIFI;
+OFF skips driver/netif initialization entirely, keeps PSRAM/automatic light
+sleep/raw sensor unchanged. Snapshots minimal-wifi-off/on under
+/tmp/flue-sleep-ab contain binaries, ELFs, sdkconfigs and main sources;
+sdkconfig diff is only MINIMAL_WIFI. OFF began intentional POWERON
+2026-10-30 01:00:36 UTC and ran through 01:31:10 (30m34s) without
+a reset; raw sensor samples continued. Reader 43796 was then closed
+intentionally to flash the saved Wi-Fi-ON comparison image.
+Wi-Fi ON began POWERON at 01:48:07 UTC and reset repeatedly: TG1 at
+01:48:21 (14s), RTCWDT at 01:48:59, TG1 at 01:49:13, RTCWDT at 01:49:21.
+Strong signal -49 dBm, PSRAM/light sleep enabled, no HTTP/WS/services.
+This strongly implicates the Wi-Fi/PSRAM/light-sleep combination, but does
+not prove the exact fault or indefinite stability without Wi-Fi. The
+planned 30-minute cap was stopped at failure as agreed; several automatic
+reboots reproduced the ON failure. Full off/flue-monitor.bin restoration
+completed, intentional POWERON at 01:50:38 UTC (PSRAM off, automatic
+light sleep ON, all app services). Serial confirms live MCP9601 readings;
+LAN and public HTTPS root both returned 200, PageKite authenticated after
+one retry. No fresh Sheets acknowledgment awaited in this recovery check.
+The unpatched SDK A/B is complete; upstream candidate remains untested.
+No web/temperature service is available during the minimal trial; restore
+full application before ending debugging. Active app offset 0x20000.
+
+Online research found upstream d45606bf1d450924fbba25eb692ab7d7e27dee77:
+"disable esp32eco3 livelock workaround to sleep process". It adjusts the
+20-ms cache workaround around light-sleep CPU stalling; absent from local
+5.5.5 source. Related merge 8220859330da141d860defece8aed1f414459bfa
+includes prerequisites. Candidate ONLY: not applied, not validated. Follow-up
+68bb4a1c446f1c19948c2d15af9626563a828908 fixes deep-sleep lock ordering.
+Evidence and URLs saved in /tmp/flue-sleep-ab/research.txt and upstream JSONs.
+Do not alter the running A/B variables to apply this candidate mid-test.
+
+
+## 2026-10-30 controlled PSRAM comparison and feature isolation (in progress)
+
+Owner steered away from merely replaying the full PSRAM build: disable
+PageKite, then Sheets, then individual PSRAM users; if that fails, start
+minimal and restore features one at a time. Follow that sequence. Temporary
+main/Kconfig.projbuild flags disable each service at its start function,
+without changing NVS settings; the PageKite guard also covers settings-save
+restart calls, and the Sheets event guard avoids using an uncreated queue.
+While PageKite is disabled, the public URL is intentionally offline; LAN
+remains available. When Sheets is disabled, real uploads are intentionally
+paused (do not insert fake samples or events).
+
+PSRAM-off run completed over 13 minutes / 7000 sleep cycles without any
+watchdog reset, with PageKite connected and two acknowledged Sheets uploads.
+Next, PSRAM-on with only PageKite disabled still reset at stages 114, 14
+and 51. Two resets happened before the first Sheets upload in those boots.
+PageKite activity is therefore not required to reproduce the failure.
+The next flashed build disables both services, keeping PSRAM/light sleep on.
+That no-services build also reset (stage 114, 952 entries/951 exits), with
+over 180 kB internal allocator low-water and no Sheets attempt. Next, JSON
+allocations were forced internal using FLUE_DIAG_JSON_INTERNAL. This also
+failed: OTA boot 23:26:47 UTC, RTCWDT reset 23:32:54 UTC (6m07s), stage 50,
+3661 entries/3660 exits. Therefore five clean minutes is not sufficient to
+claim a fix. Next individual exclusion is FLUE_DIAG_SKIP_PSRAM_STATS;
+it omits live external-heap queries rather than reporting fake zero values.
+Skipping those queries also failed after about 6m40s, TG1WDT, stage 12
+(4000 entries/3999 exits). Current next variant puts the history ring
+internal too; startup confirms this and I2C handles still use 0x3f80... .
+Owner asked whether web traffic matters. A first timed reset occurred before
+any WS client was logged, but HTTP traffic was not fully ruled out. A
+FLUE_DIAG_DISABLE_HTTP option is prepared in source to skip HTTP/WS/OTA
+startup. It is NOT enabled in the current ring trial. If the ring trial
+fails, test that option using USB logs; recovery then requires writing the
+confirmed active app partition over USB. Preserve NVS/bootloader/partitions.
+Ring-internal also failed (TG1WDT, stage 14, 587 entries/586 exits). The
+HTTP/WS/OTA-disabled build was then deployed; app validation completed and
+the USB reader was renewed (intentional POWERON at 23:52:07 UTC). It reset
+at 23:52:52 UTC (RTCWDT, stage 112, 399 entries/398 exits). No measurement
+WebSocket or HTTP server was running. Web traffic is therefore not required
+for the failure. Both unused HTTP-side allocation paths (history API copy
+and asset decompression) also cannot be required for that reset.
+Active app is confirmed at 0x20000. USB recorder session 81684 runs
+/tmp/flue-sleep-ab/serial_reader.py for an hour, appending the same serial.log.
+LAN telemetry process was stopped for this test. Next build enables only
+CONFIG_I2C_ISR_IRAM_SAFE, making the SDK sensor objects internal/cache-safe;
+it also changes interrupt cache-safety policy, not only allocation caps.
+I2C-internal was written to active 0x20000 over USB, validated by bus/device
+handles at 0x3ffc2124/0x3ffc271c and working sensor samples. It still reset
+at 00:00:13 UTC after the intentional 23:56:18 start, RTCWDT stage 110,
+2476 entries/2475 exits. Next isolated build enables CONFIG_RMT_ISR_IRAM_SAFE
+as well, keeping the LED driver's SDK context/encoders internal. LED-strip
+pixel storage already uses ordinary calloc (internal in our CAPS_ALLOC mode).
+The current USB reader session is 73936; use active slot 0x20000 for recovery.
+RMT-internal also failed within 29 seconds (RTCWDT stage 36, 236 entries/
+235 exits). Following the owner's "start from zero" direction, a separate
+minimal ESP-IDF project now lives at /tmp/flue-sleep-ab/minimal. It contains
+only direct SDK Wi-Fi station startup (NVS wifi_cfg/ssid/pass read-only,
+WIFI_STORAGE_RAM), the same 240/80 MHz automatic light sleep and a 100-ms
+delay loop with 30-second alive logs. No sensor/LED/JSON/history/HTTP/Sheets/
+PageKite or our SDK trace copies/wrappers/callbacks. compile_commands.json
+confirms original SDK rtc_clk.c and sleep_modes.c. Config copies SDK choices
+from the failing build but prunes app-only FLUE_DIAG symbols. Image 0xcad70
+was written to active 0x20000; intentional reader-start POWERON at
+2026-10-30 00:14:15 UTC. Sensor readings are intentionally unavailable during
+this minimal trial. USB reader is now session 16979; file remains serial.log.
+Restore a full app over USB before finishing; backups under off/ include
+all services with PSRAM disabled (previous 13+ minute successful control).
+The untouched-SDK minimal build itself reset at 00:16:15 UTC, two minutes
+after the intentional 00:14:15 start, RTCWDT. Thus our app modules and custom
+SDK trace copies are not required for reproduction. The minimal config
+still inherited ESP_SLEEP_CACHE_SAFE_ASSERTION=y, so the next one-variable
+test disables just that standard SDK debug option. A cached original minimal
+image/ELF/sdkconfig is under minimal-cachecheck/. USB reader is session 16979.
+Cache-check disabled minimal also reset: intentional start 00:22:00 UTC,
+RTCWDT 00:27:25 UTC (5m25s). Thus neither our SDK copies nor that debug
+check are necessary. Next minimal build disables only PM_SLP_IRAM_OPT to
+return to the normal SDK sleep path. No sensor feature is enabled. A guarded
+MINIMAL_SENSOR raw-I2C task is prepared in the temporary project for later
+stepwise additions, but do not deploy it until the base passes. Its baseline
+main.c is saved under minimal-no-cachecheck/. Reader is now session 92654.
+Monitor project's SDK trace is now explicit opt-in FLUE_DIAG_TRACE_SDK,
+default n; normal builds use untouched SDK source and omit sleep callbacks.
+Minimal normal sleep (PM_SLP_IRAM_OPT=n, cache assertion=n, sensor=n) started
+00:35:05 UTC and passed over 10 minutes (alive uptime 619 at 00:45:24), no
+reset. This is a short control, not long-term proof. First feature restored
+is MINIMAL_SENSOR: only direct SDK MCP9601 I2C prepare/read and one 4-KiB
+stack task at priority 1, raw samples every 10 seconds. No JSON/history/LED/
+web/upload code. Same original SDK, same PSRAM/PM configuration, existing
+I2C IRAM-safe setting preserved. Source is in temporary minimal/main/main.c;
+image/ELF/config are under minimal-sensor/. Active slot remains 0x20000.
+
+Owner approved investigating clock restore and comparing PSRAM on/off with
+automatic light sleep kept on. Both builds now use the same additional
+guarded local rtc_clk.c trace (tools/trace_rtc_clock_sdk.py), preserving its
+basename/linker placement. Stages 100–117 surround clock-restore calls;
+120–129 cover switching back to PLL. They only update DRAM breadcrumbs
+while the sleep clock-restore call is active. Installed SDK is untouched.
+
+PSRAM-on image 0x170a10, ELF hash prefix f70d4b662, reset twice in the
+timed trial: RTCWDT at stage 114 (PLL configuration, 44 entries/43 exits)
+and RTCWDT at stage 51 (RTC-time read returned, 545 entries/544 exits).
+Thus the fault is not demonstrated to be confined to clock restore.
+Saved on/off images, ELFs and sdkconfig snapshots are in /tmp/flue-sleep-ab;
+serial.log has UTC timestamps and telemetry.jsonl records actual PSRAM totals.
+Off image 0x161670 was deployed next. Only CONFIG_SPIRAM was explicitly
+changed; Kconfig also removed its dependent options (including old silicon
+cache libraries/ECO3 PSRAM cache-lock workaround and FATFS EXTRAM preference).
+Light sleep, 800-ms IWDT, 100-Hz tick, IRAM sleep/cache checks and Wi-Fi RX
+optimization setting remain equal. Do not interpret an intentional OTA
+SW_CPU_RESET as a watchdog failure. The off soak is still in progress.
+
+## 2026-10-29 ongoing automatic-light-sleep diagnosis
+
+Follow-up: existing sdkconfig retained CONFIG_ESP_INT_WDT_TIMEOUT_MS=300
+after enabling PSRAM. This SDK's esp_system/Kconfig defaults to 300 without
+SPIRAM and 800 with it; defaults do not overwrite existing sdkconfig values.
+Both sdkconfig.defaults and the active sdkconfig now explicitly use 800 ms.
+FreeRTOS ticks remain 100 Hz and external task stacks remain disabled;
+FreeRTOS heap_idf.c allocates stacks/TCBs from internal 8-bit RAM. No radio
+shutdown was added: automatic light sleep coordinates with Wi-Fi modem sleep.
+The SDK sleep code temporarily enables a 1-second RTC watchdog as a wakeup
+safety net, so do not assume the RTC watchdog is disabled throughout sleep.
+The detailed 300-ms trial reset after roughly 6 minutes / 3342 entries,
+TG1WDT_SYS_RESET, breadcrumb 45 (MSPI clock synchronization returned, sleep
+transition not fully completed). Image 0x170ad0 with 800 ms was built and
+deployed next. This configuration correction is not yet proof of root cause.
+The 800-ms image also reset after about 4 minutes: RTCWDT_RTC_RESET,
+breadcrumb 50, 2095 sleep entries / 2094 exits (inside/around rtc_time_get
+after waking). Thus 800 ms alone does not fix the problem. Also, this SDK
+already keeps RTC_PERIPH on via ESP_SLEEP_RTC_BUS_ISO_WORKAROUND, so our
+explicit esp_sleep_pd_config call is redundant, not a newly discovered fix.
+
+Important diagnostic correction: enabling ESP_SLEEP_CACHE_SAFE_ASSERTION
+immediately exposed a fault introduced by the temporary renamed source:
+ESP-IDF's esp_pm/linker.lf selects `sleep_modes:esp_light_sleep_start`
+by object basename. `sleep_modes_traced.c` lost that placement, leaving the
+entry function in flash (PC 0x400d5f8e). The generated copy now preserves
+`sleep_trace/sleep_modes.c`. Therefore detailed-trace reset locations above
+must not be treated as the established original fault. Watchdog resets
+before the SDK copy was introduced remain independent evidence. The fixed
+cache-check build overflowed IRAM by 672 bytes; temporarily disable the
+optional ESP_WIFI_RX_IRAM_OPT in active sdkconfig to fit the diagnostic
+check/panic handler. This is another diagnostic change, not a release fix.
+Corrected diagnostic image 0x1708f0 was written over USB to confirmed active
+slot 0x1a0000, preserving NVS/bootloader. Link symbols now confirm
+esp_light_sleep_start=0x4008ee14 and timer-wakeup entry=0x4008f1d4 (IRAM).
+That corrected RTC-memory trace build also reset (TG1WDT_SYS_RESET) after
+1584 entries, breadcrumb 14 (RTC calibration call). No cache-access panic
+was reported. Next image 0x170910 moves breadcrumbs to internal DRAM
+__NOINIT_ATTR, magic 0x534c5032, avoiding RTC-bus writes in the critical
+path and logging CPU core. It was deployed OTA; initial trace uses core 0.
+Warm-reset breadcrumbs are useful only if their magic survives; a power-on
+reset deliberately ignores them. Root cause remains unproven.
+
+This supersedes the disabled-sleep mitigation below: the owner explicitly
+requested automatic light sleep be restored and the fault debugged. It is
+enabled in main.c. Keeping RTC_PERIPH powered for RTC-126 did not prevent
+resets; neither did CONFIG_PM_SLP_IRAM_OPT=y (currently enabled in ignored
+sdkconfig). Do not claim either experiment fixed the problem or established
+its cause. Before PSRAM there were also unexplained restarts in older notes,
+but there is no evidence those had the same cause.
+
+RTC no-init breadcrumbs show interrupted sleep transitions, with both TG1
+and RTC watchdog reset reasons. Temporary sleep_diagnostics.c callbacks and
+an rtc_sleep_start linker wrapper record progress without logging/locks in
+the sleep path. tools/trace_sleep_sdk.py now generates a guarded local copy
+of ESP-IDF sleep_modes.c, compiled by main/CMakeLists.txt instead of the SDK
+original. Installed SDK files are untouched. Even stages in that script
+mark entry to a call; the next odd stage marks its return. The detailed
+trace image is 0x170a70, deployed OTA to confirmed monitor .137. Serial
+evidence is appended to /tmp/flue-light-sleep-debug.log. These are temporary
+diagnostics to remove after identifying the fault, not a release solution.
+
+## 2026-10-29 PSRAM buffers and RTC-watchdog mitigation
+
+USB follow-up identified the actual monitor as CH9102 port
+`/dev/cu.usbserial-5C671828951`, MAC 8c:94:df:0b:be:fc, ESP32-PICO-V3-02
+revision 3.1. PSRAM boot initialization and the SPI SRAM memory test pass.
+The former CH340 port was the display; never use its logs as monitor evidence.
+
+Two separate problems appeared during diagnosis. Fast WiFi scanning chose an
+AP at -79 dBm and logged beacon timeouts; shared boot/test-connect settings
+now scan all channels and select by signal. A subsequent boot chose a
+different AP at -52 dBm. Both builds pass; only the monitor was updated.
+A weak-link OTA returned 408; after confirming the monitor's active app at
+0x1a0000 in its boot log, esptool wrote only that app partition over USB,
+preserving NVS, partition table and bootloader (image 0x16ff40).
+
+Even with the strong AP, serial then captured `RTCWDT_RTC_RESET` after about
+110 seconds, without an exception backtrace. Thus WiFi alone cannot explain
+all failures. `configure_power_management()` now disables automatic light
+sleep on the monitor while keeping DFS and WiFi modem power saving. The
+exact sleep/wakeup failure mechanism is not yet established. Memory telemetry
+also reports esp_reset_reason(). Current image 0x170150 was deployed by OTA;
+serial confirms Light sleep: DISABLED. Do not re-enable automatic light sleep
+without diagnosing the failure on this Feather V2. Evidence spans multiple
+boots in /tmp/flue-psram-wifi-fixed-serial.log; no-sleep uptime/memory is in
+/tmp/flue-psram-no-lightsleep.jsonl. Saved settings still match except revision.
+
+No-sleep follow-up: continuous telemetry reached uptime 393 s with no drops
+or further reset; PageKite remained connected and Sheets acknowledged one
+real periodic sample. Internal free RAM was about 113–115 kB, allocator
+low-water 64828 bytes, sampled largest-block minimum 63488 bytes; PSRAM
+total 2097152/free 2086724 bytes (low-water 2043916 after asset decoding).
+Repeated LAN/public requests returned 200 and identity loading bytes matched
+source. Final saved-settings comparison changed only revision. This is a
+short recovery test, not proof of long-term stability or the precise watchdog
+root cause. Current app leaves 28336 bytes in its OTA slot. The monitor is
+running the PSRAM + all-channel-scan + automatic-light-sleep-disabled build.
+
+The Feather V2's 2 MiB PSRAM is now initialized/tested at boot at 40 MHz.
+Use `SPIRAM_USE_CAPS_ALLOC`, not automatic malloc integration: task stacks,
+DMA/network/TLS allocations stay internal. `SPIRAM_IGNORE_NOTFOUND` allows
+boot without PSRAM. Defaults AND the existing ignored sdkconfig were updated;
+defaults alone cannot override the previous disabled SPIRAM setting.
+Qualification: ordinary malloc/task-stack allocation stays internal, but
+SDK code that explicitly requests MALLOC_CAP_DEFAULT can still allocate
+from the external heap in CAPS_ALLOC mode. Boot logs show I2C bus/device
+handles at 0x3f80...; those SDK allocations must also be considered during
+isolation. Do not claim that only our four selected buffers use PSRAM.
+
+The shared `buffer_memory.h` uses the IDF preferred-capabilities allocator:
+PSRAM/8-bit first, internal/8-bit fallback. Only ordinary task-context data
+belongs here. The history ring is allocated once (5760 bytes), and the
+history API copy is allocated/freed per request instead of reserving another
+5760-byte static array. History allocation failure leaves live sampling
+working; API copy failure returns 503. cJSON hooks are installed once at the
+very start of app_main, before application tasks or JSON allocations, so
+JSON trees and serialized responses use the same PSRAM preference. Never
+switch global cJSON hooks per request. Both buffers for identity asset
+inflation (32 KiB dictionary plus ROM inflater state) also prefer PSRAM.
+Asset payloads remain in flash. The shared helper still works on the display
+without PSRAM enabled; its build passes, but the display was not flashed.
+
+Memory telemetry adds psram_total/free/min_free. Corrected monitor image
+0x16ff30 deployed over OTA to confirmed .137; it leaves 28880 bytes (1.9%)
+in the existing slot. PSRAM support/cache workarounds grew the image by
+63520 bytes; revisit the partition/asset arrangement before adding large
+dependencies. No partition or bootloader update was needed for this trial.
+
+Hardware recognized 2097152 PSRAM bytes. All exposed saved settings matched
+the pre-PSRAM snapshot except boot-randomized revision. With PageKite connected
+and one successful Sheets log, internal free RAM held around 114–115 kB.
+Allocator low-water was 63844 bytes; sampled minimum largest block 63488,
+compared with 40344/38912 before PSRAM under the earlier short-run test.
+The same three concurrent public GETs all returned 200; loading-page identity
+and gzip bytes plus font bytes matched source. The identity request lowered
+PSRAM low-water to 2043916 bytes without lowering the internal minima.
+History still returns 401 without login. These are short-run observations,
+not a soak or an XMPP capacity test. Evidence: /tmp/flue-psram-measure.jsonl.
+
+Host verification: `tools/test_history_memory.py` runs the actual history
+handler with 360 points/64 events and the JSON hooks under ASan/UBSan, including
+cleanup after send failure, exhausted-copy-buffer 503, and authentication.
+`tools/test_compressed_assets.py /tmp/flue-miniz-v114.c` checks actual inflater
+output, preferred allocation/fallback, exhausted allocations, disconnect and
+malformed headers. The miniz reference is upstream richgel999/miniz v114.
+Settings migration tests and both firmware builds pass.
+
+Historical first-trial outage (subsequently investigated above): after the
+5-minute telemetry capture ended (last sample
+uptime 290 s, stable memory, PageKite connected, one successful Sheets log),
+final LAN checks timed out/refused and the public URL returned relay 503.
+The display remained reachable. The Mac has both en7 and en0 on this subnet;
+explicit curl via en0 also failed, so choosing that interface did not recover
+the monitor. This does not establish a crash, reset, or PSRAM root cause.
+At that point USB was attached to the display, so monitor boot logs were
+unavailable until the owner connected the monitor. The first trial must not
+be described as stable. Known-good pre-PSRAM app image remains preserved at
+`/tmp/flue-before-psram.bin` (1443600 bytes). The earlier saved NVS settings
+were confirmed intact before the outage.
+
+## 2026-10-29 memory measurement and reverted-settings compatibility
+
+`memory_diagnostics.c` samples internal 8-bit RAM every 100 ms from the
+existing main task, plus Sheets HTTP callbacks. Reading JSON (REST and the
+existing LAN device WS) includes `memory`: current free bytes/largest block,
+allocator low-water bytes, sampled largest-block minima, Sheets sampled
+minimum free/largest bytes, request outcome counters, uptime and PageKite
+connection state. No new endpoint, task, credential or auth bypass. Sampling
+can miss sub-100-ms peaks; allocator low-water bytes sum per-heap minima.
+One measurement WS connection consumes a normal HTTP server socket.
+
+The checkout had reverted panel calibration while the monitor still ran
+that firmware and retained its longer NVS blob. An initial diagnostic OTA
+therefore fell back to defaults (no Sheets or PageKite); its numbers are
+not representative. Settings initialization never overwrote the saved blob.
+The loader now accepts the two known reverted tails (16/20 bytes beyond
+the current prefix), validates/retains the current prefix and does not
+rewrite NVS. Unknown tail sizes remain rejected. ASan/UBSan settings tests
+verify exact prefix/credential retention and unchanged stored bytes.
+After the corrected OTA, every exposed saved setting matched the pre-update
+snapshot except boot-randomized revision and removed panel-calibration keys;
+PageKite enabled/secret-set were restored and Sheets logged successfully.
+
+Corrected image 0x160710 fits the existing OTA slot with 92400 bytes free.
+Early live readings with PageKite connected showed roughly 98–102 kB free
+and a 51200-byte largest block. One successful Sheets request sampled a
+53104-byte minimum free and 47104-byte minimum largest block. Three concurrent
+public GETs (login, loading screen, font; all HTTP 200) reduced the allocator
+low-water to 40344 bytes and sampled largest-block minimum to 38912 bytes.
+These are short-run observations, not an XMPP capacity test or authenticated
+dashboard stress/long-term soak. Measurements were captured in
+`/tmp/flue-memory-measure.jsonl`; that temporary file includes the excluded
+initial boot without services, so filter for the corrected boot.
 
 See the repo root `CLAUDE.md` for the bigger-picture project this is one half
 of, and `README.md` (this folder) for day-to-day build/flash/OTA commands and

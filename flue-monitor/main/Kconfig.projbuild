@@ -1,9 +1,5 @@
 menu "Temporary feature isolation diagnostics"
 
-config FLUE_DIAG_TRACE_SDK
-    bool "Instrument local SDK sleep/clock copies (temporary debugging only)"
-    default n
-
 config FLUE_DIAG_DISABLE_PAGEKITE
     bool "Do not start PageKite (preserve saved configuration)"
     default n

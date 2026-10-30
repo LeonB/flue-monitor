@@ -6,7 +6,9 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 idf = Path(json.loads((root / 'build/project_description.json').read_text())['idf_path'])
-cjson = idf / 'components/json/cJSON'
+cjson = root / 'managed_components/espressif__cjson/cJSON'
+if not cjson.exists():
+    cjson = idf / 'components/json/cJSON'
 api = (root / 'main/rest_api.c').read_text()
 handler = api[api.index('static esp_err_t history_get_handler('):api.index('static const httpd_uri_t history_get_uri')]
 sensors_header = (root / 'main/sensors.h').read_text().replace('#pragma once', '').replace('#include "esp_err.h"', '')

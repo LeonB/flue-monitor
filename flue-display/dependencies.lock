@@ -37,6 +37,6 @@ direct_dependencies:
 - espressif/esp_websocket_client
 - espressif/led_strip
 - espressif/mdns
-manifest_hash: db5c3b8334412cf72a888ae0263efee4276c3d17c783609dc08c09af1bb8f1bd
+manifest_hash: 92cc43bbc20f445f537a549bdda71950434b003d6c497bb9f2d8841a6e6a17a5
 target: esp32
 version: 2.0.0

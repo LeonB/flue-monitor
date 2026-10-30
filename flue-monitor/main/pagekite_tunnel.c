@@ -13,7 +13,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "mbedtls/sha1.h"
+#include "psa/crypto.h"
 #include <setjmp.h>
 #include <stdbool.h>
 #include <strings.h>
@@ -114,12 +114,16 @@ static void signature(const char *payload, char out[37]) {
     unsigned char salt[4], digest[20]; char salt_hex[9], digest_hex[41];
     esp_fill_random(salt, sizeof salt);
     hex(salt, sizeof salt, salt_hex);
-    mbedtls_sha1_context ctx;
-    mbedtls_sha1_init(&ctx);
-    if (mbedtls_sha1_starts(&ctx) || mbedtls_sha1_update(&ctx, (const unsigned char *)secret, strlen(secret)) ||
-        mbedtls_sha1_update(&ctx, (const unsigned char *)payload, strlen(payload)) ||
-        mbedtls_sha1_update(&ctx, (const unsigned char *)salt_hex, 8) || mbedtls_sha1_finish(&ctx, digest)) die("Signature failed");
-    mbedtls_sha1_free(&ctx); hex(digest, sizeof digest, digest_hex);
+    psa_hash_operation_t operation = PSA_HASH_OPERATION_INIT;
+    size_t digest_len = 0;
+    psa_status_t status = psa_hash_setup(&operation, PSA_ALG_SHA_1);
+    if (status == PSA_SUCCESS) status = psa_hash_update(&operation, (const unsigned char *)secret, strlen(secret));
+    if (status == PSA_SUCCESS) status = psa_hash_update(&operation, (const unsigned char *)payload, strlen(payload));
+    if (status == PSA_SUCCESS) status = psa_hash_update(&operation, (const unsigned char *)salt_hex, 8);
+    if (status == PSA_SUCCESS) status = psa_hash_finish(&operation, digest, sizeof digest, &digest_len);
+    psa_hash_abort(&operation);
+    if (status != PSA_SUCCESS || digest_len != sizeof digest) die("Signature failed");
+    hex(digest, sizeof digest, digest_hex);
     snprintf(out, 37, "%s%.28s", salt_hex, digest_hex);
 }
 static void chunk(const void *data, size_t size) {
@@ -253,11 +257,11 @@ static void ddns_signature(const char *ip, char out[49]) {
     esp_fill_random(salt, sizeof salt); hex(salt, sizeof salt, salt_hex);
     int n = snprintf(payload, sizeof payload, "%s%s:%s%s", secret, domain, ip, salt_hex);
     if (n < 0 || (size_t)n >= sizeof payload) die("DNS update signature input too large");
-    mbedtls_sha1_context ctx; mbedtls_sha1_init(&ctx);
-    if (mbedtls_sha1_starts(&ctx) ||
-        mbedtls_sha1_update(&ctx, (const unsigned char *)payload, (size_t)n) ||
-        mbedtls_sha1_finish(&ctx, digest)) die("DNS update signature failed");
-    mbedtls_sha1_free(&ctx); hex(digest, sizeof digest, digest_hex);
+    size_t digest_len = 0;
+    if (psa_hash_compute(PSA_ALG_SHA_1, (const unsigned char *)payload,
+                         (size_t)n, digest, sizeof digest, &digest_len) != PSA_SUCCESS ||
+        digest_len != sizeof digest) die("DNS update signature failed");
+    hex(digest, sizeof digest, digest_hex);
     snprintf(out, 49, "%s%s", salt_hex, digest_hex);
     memset(payload, 0, sizeof payload);
 }

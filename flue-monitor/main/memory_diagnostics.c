@@ -3,6 +3,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_pm.h"
 #include "freertos/FreeRTOS.h"
 #include "pagekite_tunnel.h"
 
@@ -55,6 +56,11 @@ void memory_diagnostics_add_json(cJSON *root) {
     pagekite_tunnel_get_status(&tunnel);
     cJSON *memory = cJSON_AddObjectToObject(root, "memory");
     if (!memory) return;
+    cJSON_AddStringToObject(memory, "idf_version", esp_get_idf_version());
+    esp_pm_config_t power_config;
+    if (esp_pm_get_configuration(&power_config) == ESP_OK) {
+        cJSON_AddBoolToObject(memory, "light_sleep_enabled", power_config.light_sleep_enable);
+    }
     cJSON_AddNumberToObject(memory, "uptime_s", esp_timer_get_time() / 1000000);
     cJSON_AddNumberToObject(memory, "reset_reason", esp_reset_reason());
     cJSON_AddNumberToObject(memory, "internal_free", info.total_free_bytes);
