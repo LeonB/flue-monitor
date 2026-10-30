@@ -5,6 +5,7 @@
 #include "pagekite_tunnel.h"
 #include "settings.h"
 #include "psram_buffer.h"
+#include "stack_diagnostics.h"
 #include "esp_tls.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -660,6 +661,7 @@ static void task(void *unused) {
         ESP_LOGE("pagekite", "Buffer allocation failed");
         tunnel_task = NULL; vTaskDelete(NULL); return;
     }
+    stack_diagnostics_register(STACK_PAGEKITE, PAGEKITE_STACK_BYTES);
     for (int i = 0; i < STREAMS; i++) streams[i].fd = -1;
     static unsigned backoff = 2;
     for (;;) {
@@ -709,6 +711,6 @@ void pagekite_tunnel_start(void) {
     if (!initial.enabled) { set_status(PAGEKITE_STATUS_DISABLED); return; }
     set_status(PAGEKITE_STATUS_CONNECTING);
     if (tunnel_task) { xTaskNotifyGive(tunnel_task); return; }
-    if (xTaskCreate(task, "pagekite", 12288, NULL, 1, &tunnel_task) != pdPASS)
+    if (xTaskCreate(task, "pagekite", PAGEKITE_STACK_BYTES, NULL, 1, &tunnel_task) != pdPASS)
         { set_status(PAGEKITE_STATUS_NETWORK_ERROR); ESP_LOGE("pagekite", "Unable to allocate tunnel task"); }
 }

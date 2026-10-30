@@ -23,6 +23,7 @@
 #include "web_assets_generated.h"
 #include "compressed_assets.h"
 #include "buffer_memory.h"
+#include "stack_diagnostics.h"
 
 static const char *TAG = "rest_api";
 
@@ -997,11 +998,16 @@ static const httpd_uri_t pagekite_status_uri = {
 
 static httpd_handle_t s_server = NULL;
 
+static void register_http_stack(void *arg) {
+  (void)arg;
+  stack_diagnostics_register(STACK_HTTP, HTTP_STACK_BYTES);
+}
+
 httpd_handle_t rest_api_start(void) {
   dashboard_auth_init();
   httpd_handle_t server = NULL;
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.stack_size = 8192;  // shared with ota_server's esp_ota_* calls, which need more than the 4096 default
+  config.stack_size = HTTP_STACK_BYTES;  // shared with OTA; keep existing 8192 bytes
   // default (8) is too few once ota + ws + web_ui + this project's own
   // endpoints are all registered -- 17 handlers as of the 4 embedded-font
   // routes added alongside this comment; sized with headroom rather than
@@ -1022,6 +1028,8 @@ httpd_handle_t rest_api_start(void) {
 
   ESP_LOGI(TAG, "Starting REST API server on port %d", config.server_port);
   ESP_ERROR_CHECK(httpd_start(&server, &config));
+  if (httpd_queue_work(server, register_http_stack, NULL) != ESP_OK)
+    ESP_LOGW(TAG, "HTTP stack measurement registration failed");
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &auth_status_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &auth_login_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &auth_setup_uri));

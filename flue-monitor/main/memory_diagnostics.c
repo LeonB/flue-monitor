@@ -1,4 +1,5 @@
 #include "memory_diagnostics.h"
+#include "stack_diagnostics.h"
 #include <stdint.h>
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -56,6 +57,7 @@ void memory_diagnostics_add_json(cJSON *root) {
     pagekite_tunnel_get_status(&tunnel);
     cJSON *memory = cJSON_AddObjectToObject(root, "memory");
     if (!memory) return;
+    stack_diagnostics_add_json(memory);
     cJSON_AddStringToObject(memory, "idf_version", esp_get_idf_version());
 #if CONFIG_SPIRAM
     cJSON_AddBoolToObject(memory, "buffer_psram_only", true);

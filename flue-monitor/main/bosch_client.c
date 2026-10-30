@@ -1,5 +1,6 @@
 // POINTT protocol based on CaseyRo/ha_bosch; no Bosch resource writes.
 #include "bosch_client.h"
+#include "stack_diagnostics.h"
 #include "bosch_protocol.h"
 #include "dashboard_auth.h"
 #include "buffer_memory.h"
@@ -365,6 +366,7 @@ bool bosch_client_get_temperature(double *temperature_c) {
     return valid;
 }
 static void task(void *arg) {
+    stack_diagnostics_register(STACK_BOSCH, BOSCH_STACK_BYTES);
     load_credentials(); set_status(refresh_token ? "connecting" : "disconnected",NULL);
     int64_t next=0; unsigned retry=30;
     for (;;) {
@@ -447,7 +449,7 @@ static esp_err_t handler(httpd_req_t *req) {
 }
 void bosch_client_start(httpd_handle_t server) {
     lock=xSemaphoreCreateMutex(); jobs=xQueueCreate(1,sizeof(char *));
-    if (lock && jobs) xTaskCreate(task,"bosch",8192,NULL,3,&worker);
+    if (lock && jobs) xTaskCreate(task,"bosch",BOSCH_STACK_BYTES,NULL,3,&worker);
     const httpd_uri_t get={.uri="/api/bosch",.method=HTTP_GET,.handler=handler};
     const httpd_uri_t post={.uri="/api/bosch",.method=HTTP_POST,.handler=handler};
     ESP_ERROR_CHECK(httpd_register_uri_handler(server,&get));

@@ -20,6 +20,7 @@
 #include "esp_netif.h"
 #include "esp_pm.h"
 #include "esp_sleep.h"
+#include "esp_timer.h"
 #include "esp_netif_sntp.h"
 #include "esp_ota_ops.h"
 #include "mdns.h"
@@ -34,6 +35,7 @@
 #include "bosch_client.h"
 #include "pagekite_tunnel.h"
 #include "memory_diagnostics.h"
+#include "stack_diagnostics.h"
 #include "secrets.h"
 #include "sensors.h"
 #include "settings.h"
@@ -59,6 +61,7 @@ static void wifi_status_changed(bool connected) {
 // reachable over the network until WiFi connects and rest_api_start() runs.
 static void sensor_log_task(void *arg) {
   (void) arg;
+  stack_diagnostics_register(STACK_SENSOR, SENSOR_STACK_BYTES);
   TickType_t next_read = xTaskGetTickCount();
   unsigned diagnostic_ticks = 0;
   while (true) {
@@ -152,6 +155,7 @@ static void *json_internal_alloc(size_t size) {
 #endif
 
 void app_main(void) {
+  stack_diagnostics_register(STACK_MAIN, CONFIG_ESP_MAIN_TASK_STACK_SIZE);
   ESP_ERROR_CHECK(tls_memory_init());
   // Install once before any application tasks/JSON allocations. All users
   // share these hooks; never switch allocators around an individual request.
@@ -170,7 +174,7 @@ void app_main(void) {
   if (sensors_init() != ESP_OK) {
     ESP_LOGW(TAG, "No sensors found at all -- continuing anyway (Milestone 2 verification build)");
   }
-  xTaskCreate(sensor_log_task, "sensor_log", 4096, NULL, tskIDLE_PRIORITY + 1, NULL);
+  xTaskCreate(sensor_log_task, "sensor_log", SENSOR_STACK_BYTES, NULL, tskIDLE_PRIORITY + 1, NULL);
 
   status_led_init();
 
@@ -217,8 +221,14 @@ void app_main(void) {
     sheets_logger_init();
     pagekite_tunnel_start();
 
+    int64_t next_stack_sample_us = 0;
     while (true) {
       memory_diagnostics_sample();
+      int64_t now_us = esp_timer_get_time();
+      if (now_us >= next_stack_sample_us) {
+        stack_diagnostics_sample();
+        next_stack_sample_us = now_us + 10000000;
+      }
       vTaskDelay(pdMS_TO_TICKS(100));
     }
   } else {

@@ -17,6 +17,7 @@
 #include "settings.h"
 #include "bosch_client.h"
 #include "memory_diagnostics.h"
+#include "stack_diagnostics.h"
 
 static const char *TAG = "sheets_logger";
 
@@ -240,6 +241,7 @@ bool sheets_logger_log_event(const char *event) {
 }
 
 static void sheets_logger_task(void *arg) {
+  stack_diagnostics_register(STACK_SHEETS, SHEETS_STACK_BYTES);
   (void) arg;
 
   while (true) {
@@ -313,5 +315,5 @@ void sheets_logger_init(void) {
   // HTTPS/TLS uses substantial stack while the logger's local request buffers
   // and settings snapshot are live. The previous 6 KiB stack overflowed during
   // the first periodic webhook request on-device.
-  xTaskCreate(sheets_logger_task, "sheets_logger", 12288, NULL, tskIDLE_PRIORITY + 1, NULL);
+  xTaskCreate(sheets_logger_task, "sheets_logger", SHEETS_STACK_BYTES, NULL, tskIDLE_PRIORITY + 1, NULL);
 }

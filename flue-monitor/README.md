@@ -85,6 +85,17 @@ this policy. Reading telemetry reports `buffer_psram_only` and `tls_psram_only`
 so the running policy can be checked after deployment. Do not interpret a
 successful build or host allocator test as proof of improved device stability.
 
+`memory.stacks` reports six application tasks (`main`, `sensor`, `sheets`,
+`bosch`, `pagekite`, `http`). Each entry contains `size_bytes`, `min_free_bytes`
+and `peak_used_estimate_bytes`. The main loop scans lifetime stack high-water
+marks every ten seconds, without an extra task or enabling FreeRTOS tracing.
+Unregistered/unmeasured tasks are omitted. Values reset at reboot and estimate
+use from untouched stack fill bytes; they are not a guarantee of worst-case use.
+Keep stack sizes unchanged until handshakes, reconnects, uploads, authentication
+and errors have been exercised. An OTA handler's final peak is lost at its reboot
+unless captured separately before restarting. The existing JSONL recorder keeps
+the nested stack fields automatically.
+
 The monitor uses ESP-IDF **6.0.3**, which includes Espressif's
 [light-sleep/cache-workaround fix](https://github.com/espressif/esp-idf/commit/d45606bf1d450924fbba25eb692ab7d7e27dee77).
 The previous custom 5.5.6 backport and SDK tracing copies are removed.
