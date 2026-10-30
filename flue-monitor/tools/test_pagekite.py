@@ -26,7 +26,9 @@ preamble = r'''
 #define BACKENDS 2
 #define REQUEST_LIMIT 4096
 #define LOCAL_PORT 18776
-static char response_buffer[LIMIT+1];
+static char *response_buffer;
+static bool fail_buffer_alloc;
+static void *psram_buffer_alloc(size_t size) {return fail_buffer_alloc ? NULL : malloc(size);}
 static int transport, peer;
 static const char *domain="demo.pagekite.me", *custom_domain="demo.example.nl";
 static int64_t esp_timer_get_time(void) {struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (int64_t)t.tv_sec*1000000+t.tv_nsec/1000;}
@@ -67,8 +69,17 @@ static void feed(const char *sid,const char *flags,const void *payload,size_t si
  receive();
 }
 int main(void) {
+ response_buffer=psram_buffer_alloc(LIMIT+1);assert(response_buffer);
  streams=calloc(STREAMS,sizeof *streams);assert(streams);
  for(int i=0;i<STREAMS;i++)streams[i].fd=-1;
+ stream_t growth={.request=psram_buffer_alloc(513),.capacity=512,.used=4};
+ assert(growth.request);memcpy(growth.request,"test",5);char *original=growth.request;
+ fail_buffer_alloc=true;assert(!reserve_request(&growth,1024));
+ assert(growth.request==original && growth.capacity==512 && !strcmp(growth.request,"test"));
+ fail_buffer_alloc=false;assert(reserve_request(&growth,1024));
+ assert(growth.capacity==1024 && !strcmp(growth.request,"test"));
+ assert(!reserve_request(&growth,REQUEST_LIMIT+1));free(growth.request);
+ puts("PASS request growth preserves content and retains old allocation on allocation failure");
  int pair[2];assert(!socketpair(AF_UNIX,SOCK_STREAM,0,pair));transport=pair[0];peer=pair[1];int buffer_size=262144;setsockopt(peer,SOL_SOCKET,SO_SNDBUF,&buffer_size,sizeof buffer_size);
  heartbeat(29999999);assert(!*pending_ping);
  heartbeat(30000000);assert(*pending_ping);char probe[256];int probe_n=recv(peer,probe,sizeof probe-1,0);assert(probe_n>0);probe[probe_n]=0;assert(strstr(probe,"PING: "));
@@ -135,7 +146,7 @@ int main(void) {
  reset();close(backend[1]);close(backend[2]);close(listener);
  changed=true;int64_t started=esp_timer_get_time();session_loop();assert(esp_timer_get_time()-started>=900000);
  puts("PASS configuration change exits the active session after the save-response grace period");
- close(transport);close(peer);free(streams);
+ close(transport);close(peer);free(streams);free(response_buffer);
  puts("PASS eight queued streams, at most two local backends, queued request starts after close");return 0;
 }
 '''

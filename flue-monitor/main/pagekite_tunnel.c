@@ -4,6 +4,7 @@
 #include <netdb.h>
 #include "pagekite_tunnel.h"
 #include "settings.h"
+#include "psram_buffer.h"
 #include "esp_tls.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -34,7 +35,7 @@
 #define LOCAL_PORT 80
 static esp_tls_t *tls;
 static jmp_buf failed;
-static char response_buffer[LIMIT + 1];
+static char *response_buffer;
 static int transport = -1;
 static unsigned reconnects;
 static pagekite_settings_t config;
@@ -348,8 +349,12 @@ static bool reserve_request(stream_t *s, size_t needed) {
     if (needed <= s->capacity) return true;
     size_t capacity = (needed + 511) / 512 * 512;
     if (capacity > REQUEST_LIMIT) capacity = REQUEST_LIMIT;
-    char *buffer = realloc(s->request, capacity + 1);
+    // Plain realloc can move a PSRAM allocation back into internal RAM.
+    // Preserve the old request if PSRAM cannot satisfy growth.
+    char *buffer = psram_buffer_alloc(capacity + 1);
     if (!buffer) return false;
+    if (s->request) memcpy(buffer, s->request, s->used + 1);
+    free(s->request);
     s->request = buffer; s->capacity = capacity;
     return true;
 }
@@ -496,7 +501,7 @@ static void prepare(int i) {
     char forwarded_auth[704] = "";
     if (have_cookie) snprintf(forwarded_auth + strlen(forwarded_auth), sizeof forwarded_auth - strlen(forwarded_auth), "Cookie: %s\r\n", cookie);
     if (have_origin) snprintf(forwarded_auth + strlen(forwarded_auth), sizeof forwarded_auth - strlen(forwarded_auth), "Origin: %s\r\n", origin);
-    int n = snprintf(response_buffer, sizeof response_buffer,
+    int n = snprintf(response_buffer, LIMIT + 1,
         "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nAccept-Encoding: %s\r\n%s%s%s%s%s\r\n",
         method, target, request_host, encoding, *etag ? "If-None-Match: " : "", etag,
         *etag ? "\r\n" : "", forwarded_auth, body_header);
@@ -570,7 +575,7 @@ static void receive(void) {
         if (!strcmp(streams[i].sid, sid)) { index = i; break; }
     if (index < 0 && *sid && !*flags && left) {
         for (int i = 0; i < STREAMS; i++) if (!*streams[i].sid) {
-            streams[i].request = malloc(513);
+            streams[i].request = psram_buffer_alloc(513);
             streams[i].capacity = 512;
             if (!streams[i].request) break;
             streams[i].request[0] = 0;
@@ -646,8 +651,15 @@ static void session_loop(void) {
 static void task(void *unused) {
     (void)unused;
     domain = config.domain; custom_domain = config.custom_domain; secret = config.secret;
-    streams = calloc(STREAMS, sizeof *streams);
-    if (!streams) { ESP_LOGE("pagekite", "Stream allocation failed"); tunnel_task = NULL; vTaskDelete(NULL); return; }
+    streams = psram_buffer_calloc(STREAMS, sizeof *streams);
+    response_buffer = psram_buffer_alloc(LIMIT + 1);
+    if (!streams || !response_buffer) {
+        free(streams); free(response_buffer);
+        streams = NULL; response_buffer = NULL;
+        set_failure_status("PageKite buffer allocation failed");
+        ESP_LOGE("pagekite", "Buffer allocation failed");
+        tunnel_task = NULL; vTaskDelete(NULL); return;
+    }
     for (int i = 0; i < STREAMS; i++) streams[i].fd = -1;
     static unsigned backoff = 2;
     for (;;) {
