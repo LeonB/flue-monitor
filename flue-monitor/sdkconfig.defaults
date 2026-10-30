@@ -9,7 +9,7 @@ CONFIG_ESP_SLEEP_EVENT_CALLBACKS=y
 CONFIG_ESP_INT_WDT_TIMEOUT_MS=800
 
 # Feather V2: 2 MiB PSRAM. Only explicitly selected data allocations use it;
-# normal malloc, networking, DMA buffers and task stacks stay internal.
+# normal malloc, Wi-Fi, DMA buffers and task stacks stay internal.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_BOOT_INIT=y
 CONFIG_SPIRAM_TYPE_AUTO=y
@@ -17,6 +17,8 @@ CONFIG_SPIRAM_SPEED_40M=y
 CONFIG_SPIRAM_USE_CAPS_ALLOC=y
 CONFIG_SPIRAM_MEMTEST=y
 CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+# TLS/PSA and application buffers require PSRAM without internal fallback.
+CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC=y
 
 # Milestone 4: OTA. Two 1500K app slots (comfortable headroom above the
 # ~984K current build size) instead of one single-app partition -- requires

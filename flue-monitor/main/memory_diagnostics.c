@@ -57,6 +57,16 @@ void memory_diagnostics_add_json(cJSON *root) {
     cJSON *memory = cJSON_AddObjectToObject(root, "memory");
     if (!memory) return;
     cJSON_AddStringToObject(memory, "idf_version", esp_get_idf_version());
+#if CONFIG_SPIRAM
+    cJSON_AddBoolToObject(memory, "buffer_psram_only", true);
+#else
+    cJSON_AddBoolToObject(memory, "buffer_psram_only", false);
+#endif
+#if CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC
+    cJSON_AddBoolToObject(memory, "tls_psram_only", true);
+#else
+    cJSON_AddBoolToObject(memory, "tls_psram_only", false);
+#endif
     esp_pm_config_t power_config;
     if (esp_pm_get_configuration(&power_config) == ESP_OK) {
         cJSON_AddBoolToObject(memory, "light_sleep_enabled", power_config.light_sleep_enable);

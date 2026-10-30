@@ -42,6 +42,7 @@
 #include "wifi_setup.h"
 #include "ws_server.h"
 #include "buffer_memory.h"
+#include "tls_memory.h"
 
 static const char *TAG = "main";
 
@@ -151,6 +152,7 @@ static void *json_internal_alloc(size_t size) {
 #endif
 
 void app_main(void) {
+  ESP_ERROR_CHECK(tls_memory_init());
   // Install once before any application tasks/JSON allocations. All users
   // share these hooks; never switch allocators around an individual request.
 #if CONFIG_FLUE_DIAG_JSON_INTERNAL

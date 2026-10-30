@@ -62,13 +62,28 @@ itself at `/` -- visually verified in a real browser).
 
 ## Setup
 
-The monitor enables the Feather V2's 2 MiB PSRAM for history, JSON and asset
-decompression buffers, with internal-RAM fallback if PSRAM is unavailable.
+The monitor requires the Feather V2's 2 MiB PSRAM for history, JSON, Bosch,
+WebSocket send buffers, settings request bodies and asset decompression buffers.
+These application buffers never fall back to internal RAM. The shared allocator
+uses internal RAM only in builds configured without PSRAM, such as the display.
+PageKite's 4097-byte scratch buffer, stream table and queued requests require
+PSRAM, including request growth. Failed allocation is logged and never falls
+back to internal RAM. Failed growth retains the old request and returns a
+service-unavailable response; failed startup allocation stops the tunnel worker.
 Task stacks and ordinary malloc allocations remain internal. SDK code that
 explicitly requests generic heap capabilities can still select PSRAM.
 Assets themselves stay in flash. Reading telemetry reports both internal RAM
 and PSRAM usage. An existing sdkconfig with SPIRAM disabled must be updated
 explicitly; sdkconfig.defaults only supplies missing configuration values.
+
+The normal configuration selects `CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC=y`.
+`tls_memory_init()` installs the PSRAM-only allocator once, at the start of `app_main`,
+before any network workers. This applies to Mbed TLS/PSA allocations, not only
+the record buffers. Failed allocation is logged and propagates to TLS without
+using internal RAM. Both the active sdkconfig and sdkconfig.defaults select
+this policy. Reading telemetry reports `buffer_psram_only` and `tls_psram_only`
+so the running policy can be checked after deployment. Do not interpret a
+successful build or host allocator test as proof of improved device stability.
 
 The monitor uses ESP-IDF **6.0.3**, which includes Espressif's
 [light-sleep/cache-workaround fix](https://github.com/espressif/esp-idf/commit/d45606bf1d450924fbba25eb692ab7d7e27dee77).
