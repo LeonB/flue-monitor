@@ -1,5 +1,33 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-14 lossless PNG flash reduction DEPLOYED
+
+Owner requested firmware storage reduction and authorized access; prior autonomous
+flash/testing authorization persists. Measured baseline1522480B with13520B OTA
+headroom. Added optional tools/optimize_png_assets.py maintenance tool (temporary
+Pillow13.0.0/zopfli0.4.0 environment /tmp/flue-library-publish/test-env). Ordinary
+build has no new dependency. Tested candidates with/without Zopfli, kept only
+smaller gzip payloads, verified identical RGBA pixels, dimensions, color/density
+metadata on ALL17PNGs. Original sources archived .cache/asset-optimization/.
+No fonts, TLS, watchdog, runtime code or partitions changed. Plain stronger outer
+gzip alone was only2031B across all web assets, so not added to build.
+
+PNG gzip payloads shrink10826B. Actual image1511632B: saves10848B; free24368B.
+SHA2567e2ac6dd9828eb9410ec4fb8bc17e4b43ce6e5ebc23fab6639783677bc50e7eb.
+Exact bin/ELF/map/actual /tmp/flue-cloudflare.sdkconfig copied to
+.cache/asset-optimization/deployment/7e2ac6dd9828eb94/; build.log/report in parent.
+Compressed-asset, actual asset handler/version/cache and login HTML tests passed;
+firmware build passed. UTC history work was committed earlier as cfa4e3e.
+PNG source/tool/docs modifications NOT committed yet.
+
+OTA through tools/ota_with_history.py succeeded. UTC pre-backup and independent
+post-restore readback in .cache/ota-history/20261114T010304815668Z/ verified
+43samples/4events preserved. All17PNGs served byte-exact through LAN identity AND
+gzip (34requests); hardware-verification.json in frozen deployment directory.
+Settings preserved and password configured; public /login HTTP200. No USB opened.
+No blind USB opening: earlier power-on reset cause remains unknown. Original
+remaining direct HTTP2 assets/API work is still pending, not accomplished here.
+
 ## 2026-11-14 baseline committed; UTC Mac backup implemented locally
 
 User requested commit all changes, THEN start UTC timestamps. Baseline source,

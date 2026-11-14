@@ -245,6 +245,13 @@ writing only the two application slots; settings, bootloader and partition table
 are preserved. Activate ESP-IDF first so `esptool` is available. The monitor must
 still be reachable over WiFi to download the backup before the USB reset.
 
+PNG assets can be optimized losslessly with `tools/optimize_png_assets.py`.
+This optional maintenance tool needs Pillow and zopfli; neither is needed for
+normal builds. Run without arguments to measure, or with `--write` to apply only
+changes that shrink the actual gzip payload embedded in firmware. It verifies
+identical RGBA pixels, dimensions and color metadata, and archives originals
+under `.cache/asset-optimization/`.
+
 ## REST API (once connected to WiFi)
 
 Reading responses and device WebSocket readings include a `memory` object
