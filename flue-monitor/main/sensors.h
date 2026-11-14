@@ -60,18 +60,14 @@ void sensors_read(sensor_reading_t *out);
 // any future WS broadcast (Milestone 4) should actually call.
 void sensors_get_last_reading(sensor_reading_t *out);
 
-// Ring buffer capacity for sensors_get_history() below -- ~4min resolution
-// * 360 = 24h. Deliberately coarser than sensors_read()'s own 10s cadence
-// (see sensors.c's HISTORY_PUSH_EVERY_N): a phone-width graph has no use
-// for 8640 raw samples, and building a cJSON tree that large risks
-// exhausting heap. Exposed (not just a private sensors.c define) so
-// rest_api.c's GET /api/history handler can size its own output buffer to
-// match.
+// Fixed PSRAM capacity: at least 24h at the four-minute sampling cadence.
+// Temperatures are rounded to whole degrees. Runs with the same temperature/
+// zone and rates within 0.05C/min keep their first/latest points, so quiet
+// periods consume fewer entries. API remains bounded.
 #define SENSORS_HISTORY_CAPACITY 360
 
-// One point in the 24h history ring buffer. uptime_s is
-// esp_timer_get_time() at the time of this sample, seconds since boot (no
-// RTC/NTP on this device, so not wall-clock time) -- GET /api/history's
+// One point in the compressed history ring buffer. uptime_s is
+// esp_timer_get_time() at the time of this sample, seconds since boot (restored pre-boot points use uint32_t wraparound) -- GET /api/history's
 // own handler converts these to "seconds ago" relative to now.
 typedef struct {
   uint32_t uptime_s;
@@ -84,6 +80,8 @@ typedef struct {
 // into out. Returns how many were actually copied (<= max_out, and <= the
 // ring buffer's own current fill level). Thread-safe.
 size_t sensors_get_history(history_sample_t *out, size_t max_out);
+// Saved timestamps are rebased modulo uint32_t to include pre-boot points.
+esp_err_t sensors_merge_history(const history_sample_t *saved, size_t count, uint32_t now);
 
 #ifdef __cplusplus
 }

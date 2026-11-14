@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory() as directory:
             encoded = bytes(int(n) for n in array.split(',') if n.strip())
             decoded = gzip.decompress(encoded)
             assert encoded[:4] == b'\x1f\x8b\x08\x00'
-            assert decoded in list(web.payloads.values()) + [source.read_bytes() for source in assets]
+            assert decoded in list(web.payloads.values()) + [web.login] + [source.read_bytes() for source in assets]
             assert hashlib.sha256(encoded).hexdigest()[:24] in generated
     generated = (tmp / 'monitor.h').read_text()
     assert 'asset_css_gzip[]' not in generated and 'asset_alpine_js_gzip[]' not in generated

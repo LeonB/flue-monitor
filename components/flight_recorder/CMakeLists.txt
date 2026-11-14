@@ -1,0 +1,10 @@
+if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
+    set(recorder_wdt_component esp_hal_wdt)
+else()
+    set(recorder_wdt_component hal)
+endif()
+idf_component_register(SRCS flight_recorder.c flight_recorder_self_test.c dump_watchdog.c INCLUDE_DIRS include
+                       PRIV_REQUIRES esp_timer esp_hw_support esp_system esp_driver_uart ${recorder_wdt_component} freertos)
+if(CONFIG_FLUE_DIAG_RECORDER)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_core_dump_write")
+endif()

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include "history_snapshot.h"
 
 #include "cJSON.h"
 #include "esp_log.h"
@@ -16,7 +17,8 @@
 #include "sensors.h"
 #include "settings.h"
 #include "dashboard_auth.h"
-#include "pagekite_tunnel.h"
+#include "cloudflare_tunnel.h"
+#include "cloudflare_font.h"
 #include "memory_diagnostics.h"
 #include "sheets_logger.h"
 #include "ws_server.h"
@@ -36,13 +38,15 @@ static bool auth_required(httpd_req_t *req) {
 }
 
 // Initial password enrollment is allowed only through a LAN hostname/IP.
-// Never let a remote PageKite visitor race to claim a factory-fresh device.
+// Never let a remote tunnel visitor race to claim a factory-fresh device.
 static bool auth_setup_is_remote(httpd_req_t *req) {
   return dashboard_auth_is_remote(req);
 }
 
-static const char login_page[] = "<!doctype html><html lang=\"en\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\"><title>Flue Monitor sign in</title><script>if('serviceWorker' in navigator && window.isSecureContext){navigator.serviceWorker.register('/service-worker.js',{updateViaCache:'none'}).catch(()=>{});}</script><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_640x1136_URL "\" media=\"(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_750x1334_URL "\" media=\"(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1242x2208_URL "\" media=\"(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1125x2436_URL "\" media=\"(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_828x1792_URL "\" media=\"(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1242x2688_URL "\" media=\"(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1170x2532_URL "\" media=\"(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1179x2556_URL "\" media=\"(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1206x2622_URL "\" media=\"(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1284x2778_URL "\" media=\"(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1290x2796_URL "\" media=\"(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1320x2868_URL "\" media=\"(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1260x2736_URL "\" media=\"(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1080x2340_URL "\" media=\"(device-width: 360px) and (device-height: 780px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><meta name=\"color-scheme\" content=\"light\"><meta name=\"apple-mobile-web-app-status-bar-style\" content=\"default\"><style>html,body{background:#f5ead8;color:#201e1d;color-scheme:light}#startup{position:fixed;inset:0;z-index:100;background:#f5ead8;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center;font:17px/1.5 system-ui,sans-serif}#startup,#startup *{box-sizing:border-box}#startup[hidden]{display:none}#startup h1{font:600 24px/1.2 system-ui,sans-serif;letter-spacing:normal;margin:24px 0 8px}#startup p{max-width:300px;color:#645c50;margin:0 0 20px}#startup a{color:#8c491a;text-underline-offset:4px;padding:12px}.startup-spinner{width:24px;height:24px;border:3px solid #d9c9b0;border-top-color:#8c491a;border-radius:50%;animation:startup-spin 1s linear infinite}@keyframes startup-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.startup-spinner{animation:none}}</style><link rel=\"icon\" href=\"" ASSET_favicon_URL "\" sizes=\"any\"><link rel=\"icon\" href=\"" ASSET_stove_svg_URL "\" type=\"image/svg+xml\"><link rel=\"apple-touch-icon\" href=\"" ASSET_apple_icon_URL "\" sizes=\"180x180\"><link rel=\"manifest\" href=\"" ASSET_manifest_URL "\"><meta name=\"theme-color\" content=\"#f5ead8\"><meta name=\"apple-mobile-web-app-capable\" content=\"yes\"><meta name=\"apple-mobile-web-app-title\" content=\"Flue Monitor\"><style>@font-face{font-family:Caprasimo;src:url('" ASSET_caprasimo_400_URL "') format('woff2');font-display:swap}@font-face{font-family:Figtree;src:url('" ASSET_figtree_400_URL "') format('woff2');font-display:swap}@font-face{font-family:Figtree;src:url('" ASSET_figtree_600_URL "') format('woff2');font-weight:600;font-display:swap}*{box-sizing:border-box}body{margin:0;background:#f5ead8;color:#201e1d;font:18px Figtree,system-ui,sans-serif}main{width:min(100%,480px);min-height:100svh;margin:auto;padding:clamp(40px,12vh,100px) 28px max(32px,env(safe-area-inset-bottom));display:flex;flex-direction:column}h1{font:400 clamp(34px,8vw,42px)/1.15 Caprasimo,Georgia,serif;letter-spacing:-.7px;margin:0 0 14px}#intro{margin:0;color:#645c50;line-height:1.5}form{flex:1;display:flex;flex-direction:column;margin-top:42px}label{display:block;font-size:16px;font-weight:600;color:#645c50;margin:0 0 12px 18px}.field{position:relative}input{width:100%;font:inherit;min-height:64px;padding:18px 64px 18px 22px;border:1px solid #cfc2ab;border-radius:36px;background:#ebddc5;color:#201e1d;outline:none}input:focus{border-color:#b2622d;box-shadow:0 0 0 3px #c6713926}#c{margin-top:14px;padding-right:22px}button{font:inherit;cursor:pointer}#show{position:absolute;right:13px;top:10px;width:44px;height:44px;display:grid;place-items:center;background:none;border:0;color:#201e1d;border-radius:50%}#show:focus-visible,#b:focus-visible{outline:3px solid #7a8a5e;outline-offset:4px}#show svg{width:24px;height:24px}.remember{display:flex;align-items:center;gap:12px;margin:24px 6px 0;color:#201e1d;font-size:16px;font-weight:400;cursor:pointer}.remember input{appearance:none;-webkit-appearance:none;width:24px;min-height:24px;height:24px;padding:0;margin:0;border:1px solid #cfc2ab;border-radius:7px;background:#ebddc5;flex:none;cursor:pointer}.remember input:checked{background-color:#bb773e;border-color:#bb773e;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff5e6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 12 4 4 8-8'/%3E%3C/svg%3E\");background-size:100% 100%;background-repeat:no-repeat}.remember input:focus-visible{outline:3px solid #7a8a5e;outline-offset:3px}.session-note{font-size:13px;line-height:1.5;color:#82796a;margin:8px 6px 0 42px}#e{min-height:48px;margin:18px 12px;color:#8c491a;font-size:16px;line-height:1.5}.actions{margin-top:auto;padding-top:64px}#b{width:100%;min-height:64px;border:0;border-radius:36px;background:#bb773e;color:#fff5e6;font:400 23px Caprasimo,Georgia,serif;transition:background .15s}#b:hover{background:#a56331}#b:disabled{cursor:wait;opacity:.65}.note{margin:20px 0 0;text-align:center;color:#82796a;font-size:14px;line-height:1.5}@media(min-width:700px){main{min-height:min(860px,100svh);padding-top:80px}.actions{padding-top:90px}}@media(max-height:600px){main{padding-top:30px}form{margin-top:24px}.actions{padding-top:24px}}</style><main><h1 id=\"title\">Welcome back</h1><p id=\"intro\">Connecting to your Flue Monitor…</p><form id=\"dashboard-login\" name=\"dashboard-login\" method=\"post\" action=\"/api/auth/login\" autocomplete=\"on\"><label id=\"label\" for=\"p\">Password</label><div class=\"field\"><input id=\"p\" name=\"password\" type=\"password\" required minlength=\"8\" maxlength=\"128\" autocomplete=\"current-password\"><button id=\"show\" type=\"button\" aria-label=\"Show password\" aria-pressed=\"false\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg></button></div><input id=\"c\" name=\"confirm_password\" aria-label=\"Confirm password\" type=\"password\" maxlength=\"128\" autocomplete=\"off\" placeholder=\"Confirm password\" style=\"display:none\" disabled aria-hidden=\"true\"><label class=\"remember\"><input id=\"remember\" type=\"checkbox\"><span>Keep me signed in</span></label><p class=\"session-note\">Keep access after closing the browser, until the monitor restarts.</p><p id=\"e\" role=\"status\" aria-live=\"polite\" aria-atomic=\"true\"></p><div class=\"actions\"><button id=\"b\" type=\"submit\" disabled>Sign in</button><p class=\"note\">Your stove, at a glance.</p></div></form></main>"
-  "<script>(()=>{if(location.pathname!=='/login'){location.replace('/login');return}const form=document.querySelector('form'),password=document.getElementById('p'),confirm=document.getElementById('c')||document.createElement('input'),intro=document.getElementById('intro'),label=document.getElementById('label'),button=document.getElementById('b'),feedback=document.getElementById('e'),remember=document.getElementById('remember');let first=false,ready=false,busy=false;const show=document.getElementById('show');show.onclick=()=>{const reveal=password.type==='password';password.type=reveal?'text':'password';show.setAttribute('aria-label',reveal?'Hide password':'Show password');show.setAttribute('aria-pressed',String(reveal))};if(location.protocol==='http:'&&location.hostname.endsWith('.pagekite.me')){location.replace('https://'+location.host+'/');return}async function request(url,options){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);try{const response=await fetch(url,{...options,signal:controller.signal,cache:'no-store'});let data;try{data=await response.json()}catch{throw new Error('The monitor returned an unexpected response. Please try again.')}if(!response.ok)throw new Error(data.error||(response.status===403?'This address cannot be used to sign in. Open the HTTPS dashboard.':'Could not sign in. Please try again.'));return data}finally{clearTimeout(timer)}}request('/api/auth/status').then(status=>{first=!status.configured;document.getElementById('title').textContent=first?'Make yourself at home':'Welcome back';button.textContent=first?'Set password':'Sign in';intro.textContent=first?'Choose a dashboard password (8–128 characters).':'Sign in to your Flue Monitor.';label.textContent=first?'New password':'Dashboard password';password.autocomplete=first?'new-password':'current-password';form.action=first?'/api/auth/setup':'/api/auth/login';confirm.style.display=first?'block':'none';confirm.required=first;confirm.disabled=!first;confirm.autocomplete=first?'new-password':'off';confirm.setAttribute('aria-hidden',first?'false':'true');if(first&&status.setup_local_only){intro.textContent='For security, set the first password from your home network using the monitor’s local address.';password.disabled=confirm.disabled=true;return}ready=true;button.disabled=false}).catch(error=>{feedback.textContent=error.name==='AbortError'?'The monitor did not respond. Reload the page to try again.':error.message});form.onsubmit=async event=>{event.preventDefault();if(!ready||busy)return;feedback.textContent='';if(first&&password.value!==confirm.value){feedback.textContent='Passwords do not match.';return}busy=true;button.disabled=true;button.textContent=first?'Saving…':'Signing in…';feedback.textContent='Waiting for the monitor…';try{const result=await request(first?'/api/auth/setup':'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(first?{password:password.value,confirm_password:confirm.value,remember:remember.checked}:{password:password.value,remember:remember.checked})});if(result.success!==true)throw new Error('The monitor did not confirm sign-in. Please try again.');feedback.textContent='Signed in. Opening dashboard…';location.replace('/')}catch(error){feedback.textContent=error.name==='AbortError'?'The monitor did not respond within 20 seconds. Please try again.':error.message}finally{busy=false;button.disabled=false;button.textContent=first?'Set password':'Sign in'}};})();</script>";
+#if 0 // Build-time template; generate_web_assets.py emits the gzip representation.
+static const char login_page[] = "<!doctype html><html lang=\"en\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\"><title>Flue Monitor sign in</title><script>if('serviceWorker' in navigator && window.isSecureContext){navigator.serviceWorker.register('/service-worker.js',{updateViaCache:'none'}).catch(()=>{});}</script><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_640x1136_URL "\" media=\"(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_750x1334_URL "\" media=\"(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1242x2208_URL "\" media=\"(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1125x2436_URL "\" media=\"(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_828x1792_URL "\" media=\"(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1242x2688_URL "\" media=\"(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1170x2532_URL "\" media=\"(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1179x2556_URL "\" media=\"(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1206x2622_URL "\" media=\"(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1284x2778_URL "\" media=\"(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1290x2796_URL "\" media=\"(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1320x2868_URL "\" media=\"(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1260x2736_URL "\" media=\"(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><link rel=\"apple-touch-startup-image\" href=\"" ASSET_startup_1080x2340_URL "\" media=\"(device-width: 360px) and (device-height: 780px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)\"><meta name=\"color-scheme\" content=\"light\"><meta name=\"apple-mobile-web-app-status-bar-style\" content=\"default\"><style>html,body{background:#f5ead8;color:#201e1d;color-scheme:light}#startup{position:fixed;inset:0;z-index:100;background:#f5ead8;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center;font:17px/1.5 system-ui,sans-serif}#startup,#startup *{box-sizing:border-box}#startup[hidden]{display:none}#startup h1{font:600 24px/1.2 system-ui,sans-serif;letter-spacing:normal;margin:24px 0 8px}#startup p{max-width:300px;color:#645c50;margin:0 0 20px}#startup a{color:#8c491a;text-underline-offset:4px;padding:12px}.startup-spinner{width:24px;height:24px;border:3px solid #d9c9b0;border-top-color:#8c491a;border-radius:50%;animation:startup-spin 1s linear infinite}@keyframes startup-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.startup-spinner{animation:none}}</style><link rel=\"icon\" href=\"" ASSET_favicon_URL "\" sizes=\"any\"><link rel=\"icon\" href=\"" ASSET_stove_svg_URL "\" type=\"image/svg+xml\"><link rel=\"apple-touch-icon\" href=\"" ASSET_apple_icon_URL "\" sizes=\"180x180\"><link rel=\"manifest\" href=\"" ASSET_manifest_URL "\"><meta name=\"theme-color\" content=\"#f5ead8\"><meta name=\"apple-mobile-web-app-capable\" content=\"yes\"><meta name=\"apple-mobile-web-app-title\" content=\"Flue Monitor\"><style>@font-face{font-family:Caprasimo;src:url('" ASSET_caprasimo_400_URL "') format('woff2');font-display:swap}@font-face{font-family:Figtree;src:url('" ASSET_figtree_400_URL "') format('woff2');font-weight:400 700;font-display:swap}*{box-sizing:border-box}body{margin:0;background:#f5ead8;color:#201e1d;font:18px Figtree,system-ui,sans-serif}main{width:min(100%,480px);min-height:100svh;margin:auto;padding:clamp(40px,12vh,100px) 28px max(32px,env(safe-area-inset-bottom));display:flex;flex-direction:column}h1{font:400 clamp(34px,8vw,42px)/1.15 Caprasimo,Georgia,serif;letter-spacing:-.7px;margin:0 0 14px}#intro{margin:0;color:#645c50;line-height:1.5}form{flex:1;display:flex;flex-direction:column;margin-top:42px}label{display:block;font-size:16px;font-weight:600;color:#645c50;margin:0 0 12px 18px}.field{position:relative}input{width:100%;font:inherit;min-height:64px;padding:18px 64px 18px 22px;border:1px solid #cfc2ab;border-radius:36px;background:#ebddc5;color:#201e1d;outline:none}input:focus{border-color:#b2622d;box-shadow:0 0 0 3px #c6713926}#c{margin-top:14px;padding-right:22px}button{font:inherit;cursor:pointer}#show{position:absolute;right:13px;top:10px;width:44px;height:44px;display:grid;place-items:center;background:none;border:0;color:#201e1d;border-radius:50%}#show:focus-visible,#b:focus-visible{outline:3px solid #7a8a5e;outline-offset:4px}#show svg{width:24px;height:24px}.remember{display:flex;align-items:center;gap:12px;margin:24px 6px 0;color:#201e1d;font-size:16px;font-weight:400;cursor:pointer}.remember input{appearance:none;-webkit-appearance:none;width:24px;min-height:24px;height:24px;padding:0;margin:0;border:1px solid #cfc2ab;border-radius:7px;background:#ebddc5;flex:none;cursor:pointer}.remember input:checked{background-color:#bb773e;border-color:#bb773e;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff5e6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 12 4 4 8-8'/%3E%3C/svg%3E\");background-size:100% 100%;background-repeat:no-repeat}.remember input:focus-visible{outline:3px solid #7a8a5e;outline-offset:3px}.session-note{font-size:13px;line-height:1.5;color:#82796a;margin:8px 6px 0 42px}#e{min-height:48px;margin:18px 12px;color:#8c491a;font-size:16px;line-height:1.5}.actions{margin-top:auto;padding-top:64px}#b{width:100%;min-height:64px;border:0;border-radius:36px;background:#bb773e;color:#fff5e6;font:400 23px Caprasimo,Georgia,serif;transition:background .15s}#b:hover{background:#a56331}#b:disabled{cursor:wait;opacity:.65}.note{margin:20px 0 0;text-align:center;color:#82796a;font-size:14px;line-height:1.5}@media(min-width:700px){main{min-height:min(860px,100svh);padding-top:80px}.actions{padding-top:90px}}@media(max-height:600px){main{padding-top:30px}form{margin-top:24px}.actions{padding-top:24px}}</style><main><h1 id=\"title\">Welcome back</h1><p id=\"intro\">Connecting to your Flue Monitor…</p><form id=\"dashboard-login\" name=\"dashboard-login\" method=\"post\" action=\"/api/auth/login\" autocomplete=\"on\"><label id=\"label\" for=\"p\">Password</label><div class=\"field\"><input id=\"p\" name=\"password\" type=\"password\" required minlength=\"8\" maxlength=\"128\" autocomplete=\"current-password\"><button id=\"show\" type=\"button\" aria-label=\"Show password\" aria-pressed=\"false\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg></button></div><input id=\"c\" name=\"confirm_password\" aria-label=\"Confirm password\" type=\"password\" maxlength=\"128\" autocomplete=\"off\" placeholder=\"Confirm password\" style=\"display:none\" disabled aria-hidden=\"true\"><label class=\"remember\"><input id=\"remember\" type=\"checkbox\"><span>Keep me signed in</span></label><p class=\"session-note\">Keep access after closing the browser, until the monitor restarts.</p><p id=\"e\" role=\"status\" aria-live=\"polite\" aria-atomic=\"true\"></p><div class=\"actions\"><button id=\"b\" type=\"submit\" disabled>Sign in</button><p class=\"note\">Your stove, at a glance.</p></div></form></main>"
+  "<script>(()=>{if(location.pathname!=='/login'){location.replace('/login');return}const form=document.querySelector('form'),password=document.getElementById('p'),confirm=document.getElementById('c')||document.createElement('input'),intro=document.getElementById('intro'),label=document.getElementById('label'),button=document.getElementById('b'),feedback=document.getElementById('e'),remember=document.getElementById('remember');let first=false,ready=false,busy=false;const show=document.getElementById('show');show.onclick=()=>{const reveal=password.type==='password';password.type=reveal?'text':'password';show.setAttribute('aria-label',reveal?'Hide password':'Show password');show.setAttribute('aria-pressed',String(reveal))};async function request(url,options){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);try{const response=await fetch(url,{...options,signal:controller.signal,cache:'no-store'});let data;try{data=await response.json()}catch{throw new Error('The monitor returned an unexpected response. Please try again.')}if(!response.ok)throw new Error(data.error||(response.status===403?'This address cannot be used to sign in. Open the HTTPS dashboard.':'Could not sign in. Please try again.'));return data}finally{clearTimeout(timer)}}request('/api/auth/status').then(status=>{first=!status.configured;document.getElementById('title').textContent=first?'Make yourself at home':'Welcome back';button.textContent=first?'Set password':'Sign in';intro.textContent=first?'Choose a dashboard password (8–128 characters).':'Sign in to your Flue Monitor.';label.textContent=first?'New password':'Dashboard password';password.autocomplete=first?'new-password':'current-password';form.action=first?'/api/auth/setup':'/api/auth/login';confirm.style.display=first?'block':'none';confirm.required=first;confirm.disabled=!first;confirm.autocomplete=first?'new-password':'off';confirm.setAttribute('aria-hidden',first?'false':'true');if(first&&status.setup_local_only){intro.textContent='For security, set the first password from your home network using the monitor’s local address.';password.disabled=confirm.disabled=true;return}ready=true;button.disabled=false}).catch(error=>{feedback.textContent=error.name==='AbortError'?'The monitor did not respond. Reload the page to try again.':error.message});form.onsubmit=async event=>{event.preventDefault();if(!ready||busy)return;feedback.textContent='';if(first&&password.value!==confirm.value){feedback.textContent='Passwords do not match.';return}busy=true;button.disabled=true;button.textContent=first?'Saving…':'Signing in…';feedback.textContent='Waiting for the monitor…';try{const result=await request(first?'/api/auth/setup':'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(first?{password:password.value,confirm_password:confirm.value,remember:remember.checked}:{password:password.value,remember:remember.checked})});if(result.success!==true)throw new Error('The monitor did not confirm sign-in. Please try again.');feedback.textContent='Signed in. Opening dashboard…';location.replace('/')}catch(error){feedback.textContent=error.name==='AbortError'?'The monitor did not respond within 20 seconds. Please try again.':error.message}finally{busy=false;button.disabled=false;button.textContent=first?'Set password':'Sign in'}};})();</script>";
+#endif
 
 static esp_err_t auth_status_handler(httpd_req_t *req) {
   char body[80];
@@ -59,14 +63,21 @@ static esp_err_t auth_form_handler(httpd_req_t *req) {
   if ((strcmp(req->uri, "/api/auth/password") == 0 || strcmp(req->uri, "/api/auth/logout") == 0) && auth_required(req)) return ESP_FAIL;
   if (!dashboard_auth_check_csrf(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Invalid request origin");
   if (req->content_len <= 0 || req->content_len > 512) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request");
-  char body[513] = {0};
+  char *body = buffer_memory_calloc(req->content_len + 1, 1);
+  if (!body) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
   int got = 0;
   while (got < req->content_len) {
     int part = httpd_req_recv(req, body + got, req->content_len - got);
-    if (part <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
+    if (part <= 0) {
+      memset(body, 0, req->content_len + 1);
+      free(body);
+      return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
+    }
     got += part;
   }
   cJSON *root = cJSON_Parse(body);
+  memset(body, 0, req->content_len + 1);
+  free(body);
   if (!root) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
   const cJSON *pw = cJSON_GetObjectItemCaseSensitive(root, "password");
   const cJSON *remember = cJSON_GetObjectItemCaseSensitive(root, "remember");
@@ -131,12 +142,24 @@ static const httpd_uri_t auth_logout_uri = { .uri="/api/auth/logout", .method=HT
 // Text assets are stored only as gzip; WOFF2 files are already compressed.
 extern const char web_ui_font_caprasimo_400_start[] asm("_binary_caprasimo_400_woff2_start");
 extern const char web_ui_font_caprasimo_400_end[] asm("_binary_caprasimo_400_woff2_end");
-extern const char web_ui_font_figtree_400_start[] asm("_binary_figtree_400_woff2_start");
-extern const char web_ui_font_figtree_400_end[] asm("_binary_figtree_400_woff2_end");
-extern const char web_ui_font_figtree_600_start[] asm("_binary_figtree_600_woff2_start");
-extern const char web_ui_font_figtree_600_end[] asm("_binary_figtree_600_woff2_end");
-extern const char web_ui_font_figtree_700_start[] asm("_binary_figtree_700_woff2_start");
-extern const char web_ui_font_figtree_700_end[] asm("_binary_figtree_700_woff2_end");
+extern const char web_ui_font_figtree_400_start[] asm("_binary_figtree_variable_woff2_start");
+extern const char web_ui_font_figtree_400_end[] asm("_binary_figtree_variable_woff2_end");
+extern const char web_ui_font_figtree_600_start[] asm("_binary_figtree_variable_woff2_start");
+extern const char web_ui_font_figtree_600_end[] asm("_binary_figtree_variable_woff2_end");
+extern const char web_ui_font_figtree_700_start[] asm("_binary_figtree_variable_woff2_start");
+extern const char web_ui_font_figtree_700_end[] asm("_binary_figtree_variable_woff2_end");
+
+// These public font bytes are shared with the LAN handlers; no second asset copy.
+bool rest_api_tunnel_font(cft_stream_t *stream, const char *uri) {
+  static const cloudflare_font_t fonts[] = {
+    {"/fonts/caprasimo-400.woff2", web_ui_font_caprasimo_400_start, web_ui_font_caprasimo_400_end, ASSET_caprasimo_400_ETAG},
+    {"/fonts/figtree-variable.woff2", web_ui_font_figtree_400_start, web_ui_font_figtree_400_end, ASSET_figtree_400_ETAG},
+    {"/fonts/figtree-400.woff2", web_ui_font_figtree_400_start, web_ui_font_figtree_400_end, ASSET_figtree_400_ETAG},
+    {"/fonts/figtree-600.woff2", web_ui_font_figtree_600_start, web_ui_font_figtree_600_end, ASSET_figtree_600_ETAG},
+    {"/fonts/figtree-700.woff2", web_ui_font_figtree_700_start, web_ui_font_figtree_700_end, ASSET_figtree_700_ETAG},
+  };
+  return cloudflare_serve_font(stream, uri, fonts, sizeof fonts / sizeof fonts[0]);
+}
 
 // Versioned static assets stay fresh for a year; legacy URLs and HTML revalidate.
 // Gzip clients use flash directly; identity clients stream through the ROM inflater.
@@ -306,21 +329,6 @@ static esp_err_t web_ui_uplot_css_get_handler(httpd_req_t *req) {
 static const httpd_uri_t web_ui_uplot_css_uri = {.uri = "/vendor/uplot.min.css", .method = HTTP_GET, .handler = web_ui_uplot_css_get_handler};
 
 static esp_err_t web_ui_html_get_handler(httpd_req_t *req) {
-  // The custom CNAME currently lacks HTTPS; send visitors to the verified
-  // PageKite HTTPS hostname before presenting any password form.
-  if (dashboard_auth_is_remote(req)) {
-    pagekite_settings_t pk;
-    settings_get_pagekite(&pk);
-    char host[160];
-    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof host) != ESP_OK || strcasecmp(host, pk.domain)) {
-      char location[160];
-      snprintf(location, sizeof location, "https://%s/", pk.domain);
-      httpd_resp_set_status(req, "303 See Other");
-      httpd_resp_set_hdr(req, "Location", location);
-      httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-      return httpd_resp_sendstr(req, "Use the HTTPS dashboard to sign in.");
-    }
-  }
   if (!dashboard_auth_check(req)) {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -329,7 +337,12 @@ static esp_err_t web_ui_html_get_handler(httpd_req_t *req) {
       httpd_resp_set_hdr(req, "Location", "/login");
       return httpd_resp_sendstr(req, "Sign in at /login");
     }
-    return httpd_resp_send(req, login_page, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
+    if (compressed_asset_accepts_gzip(req)) {
+      httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+      return httpd_resp_send(req, (const char *)asset_login_gzip, sizeof asset_login_gzip);
+    }
+    return compressed_asset_send_identity(req, asset_login_gzip, sizeof asset_login_gzip, ASSET_login_RAW_SIZE);
   }
   return serve_asset(req, "text/html", NULL, ASSET_html_RAW_SIZE,
                      ASSET_html_ETAG, asset_html_gzip, sizeof(asset_html_gzip), ASSET_html_GZIP_ETAG);
@@ -372,6 +385,8 @@ static esp_err_t web_ui_font_figtree_400_get_handler(httpd_req_t *req) {
   return serve_asset(req, "font/woff2", web_ui_font_figtree_400_start,
                      web_ui_font_figtree_400_end - web_ui_font_figtree_400_start, ASSET_figtree_400_ETAG, NULL, 0, NULL);
 }
+static const httpd_uri_t web_ui_font_figtree_variable_uri = {
+    .uri = "/fonts/figtree-variable.woff2", .method = HTTP_GET, .handler = web_ui_font_figtree_400_get_handler};
 static const httpd_uri_t web_ui_font_figtree_400_uri = {
     .uri = "/fonts/figtree-400.woff2", .method = HTTP_GET, .handler = web_ui_font_figtree_400_get_handler};
 
@@ -497,10 +512,10 @@ static const httpd_uri_t devices_wifi_get_uri = {
 };
 
 static void settings_to_json(const settings_t *s, cJSON *root) {
-  cJSON_AddBoolToObject(root, "pagekite_enabled", s->pagekite.enabled);
-  cJSON_AddStringToObject(root, "pagekite_domain", s->pagekite.domain);
-  cJSON_AddStringToObject(root, "pagekite_custom_domain", s->pagekite.custom_domain);
-  cJSON_AddBoolToObject(root, "pagekite_secret_set", *s->pagekite.secret != 0);
+  cJSON_AddBoolToObject(root, "cloudflare_enabled", s->cloudflare.enabled);
+  cJSON_AddStringToObject(root, "cloudflare_hostname", s->cloudflare.hostname);
+  cJSON_AddNumberToObject(root, "cloudflare_connections", s->cloudflare.connections);
+  cJSON_AddBoolToObject(root, "cloudflare_token_set", *s->cloudflare.token != 0);
   cJSON_AddNumberToObject(root, "settings_revision", ws_server_settings_revision(false));
   cJSON_AddNumberToObject(root, "log_heartbeat_min", s->log_heartbeat_min);
   cJSON_AddNumberToObject(root, "zone_cold_max_c", round_to(s->zone_cold_max_c, 0.1));
@@ -524,12 +539,15 @@ static void settings_to_json(const settings_t *s, cJSON *root) {
 static esp_err_t settings_get_handler(httpd_req_t *req) {
   bool device_settings = !req->user_ctx && !dashboard_auth_is_remote(req) && !dashboard_auth_check(req);
   if (!device_settings && auth_required(req)) return ESP_FAIL;
-  settings_t s;
-  settings_get(&s);
+  settings_t *s = buffer_memory_calloc(1, sizeof *s);
+  if (!s) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
+  settings_get(s);
 
   cJSON *root = cJSON_CreateObject();
-  settings_to_json(&s, root);
-  if (req->user_ctx || device_settings) {
+  if (!root) { free(s); return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory"); }
+  settings_to_json(s, root);
+  free(s);
+  if (req->user_ctx || device_settings || dashboard_auth_is_remote(req)) {
     cJSON_DeleteItemFromObject(root, "google_sheets_secret");
     cJSON_DeleteItemFromObject(root, "google_sheets_webhook_url");
     cJSON_AddBoolToObject(root, "credentials_redacted", true);
@@ -537,6 +555,7 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
 
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
+  if (!json) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
   httpd_resp_set_type(req, "application/json");
   httpd_resp_sendstr(req, json);
   free(json);
@@ -551,10 +570,6 @@ static const httpd_uri_t settings_get_uri = {
 
 // Credential-free settings for the tunnel; omitted credentials on tunnel
 // POSTs retain their stored values. Normal LAN full-replace behavior remains.
-static const httpd_uri_t tunnel_settings_get_uri = {
-    .uri = "/api/tunnel/settings", .method = HTTP_GET,
-    .handler = settings_get_handler, .user_ctx = (void *)1,
-};
 
 // Full-replace semantics, matching the planned web UI's single sticky Save
 // bar (no per-field PATCH to preserve) -- a field missing from the request
@@ -567,7 +582,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
   // Loopback tunnel visitors always require a session, even before setup.
   if ((dashboard_auth_is_configured() || dashboard_auth_is_remote(req)) && auth_required(req)) return ESP_FAIL;
   if (!dashboard_auth_check_csrf(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Invalid request origin");
-  if (req->content_len <= 0 || req->content_len >= 2048) {
+  if (req->content_len <= 0 || req->content_len >= 8192) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Request body too large");
     return ESP_FAIL;
   }
@@ -599,89 +614,101 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
     return ESP_FAIL;
   }
 
-  settings_t s = {0};
-  settings_t current;
-  settings_get(&current);
-  memcpy(s.google_sheets_webhook_url, current.google_sheets_webhook_url, sizeof s.google_sheets_webhook_url);
-  memcpy(s.google_sheets_secret, current.google_sheets_secret, sizeof s.google_sheets_secret);
+  // Per-request snapshots: PSRAM only on the monitor, released on every exit.
+  settings_t *snapshots = buffer_memory_calloc(2, sizeof *snapshots);
+  if (!snapshots) {
+    cJSON_Delete(root);
+    return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
+  }
+  settings_t *s = &snapshots[0], *current = &snapshots[1];
+  settings_get(current);
+  memcpy(s->google_sheets_webhook_url, current->google_sheets_webhook_url, sizeof s->google_sheets_webhook_url);
+  memcpy(s->google_sheets_secret, current->google_sheets_secret, sizeof s->google_sheets_secret);
   cJSON *item;
 
   item = cJSON_GetObjectItem(root, "log_heartbeat_min");
-  s.log_heartbeat_min = cJSON_IsNumber(item) ? (uint16_t) item->valuedouble : 0;
+  s->log_heartbeat_min = cJSON_IsNumber(item) ? (uint16_t) item->valuedouble : 0;
 
   item = cJSON_GetObjectItem(root, "zone_cold_max_c");
-  s.zone_cold_max_c = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
+  s->zone_cold_max_c = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
 
   item = cJSON_GetObjectItem(root, "zone_optimal_max_c");
-  s.zone_optimal_max_c = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
+  s->zone_optimal_max_c = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
 
   item = cJSON_GetObjectItem(root, "fast_rise_c_per_min");
-  s.fast_rise_c_per_min = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
+  s->fast_rise_c_per_min = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
 
   item = cJSON_GetObjectItem(root, "thermocouple_deadband_c");
-  s.thermocouple_deadband_c = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
+  s->thermocouple_deadband_c = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
 
   item = cJSON_GetObjectItem(root, "google_sheets_webhook_url");
   if (cJSON_IsString(item)) {
-    strlcpy(s.google_sheets_webhook_url, item->valuestring, sizeof(s.google_sheets_webhook_url));
+    strlcpy(s->google_sheets_webhook_url, item->valuestring, sizeof(s->google_sheets_webhook_url));
   }
 
   item = cJSON_GetObjectItem(root, "google_sheets_secret");
   if (cJSON_IsString(item)) {
-    strlcpy(s.google_sheets_secret, item->valuestring, sizeof(s.google_sheets_secret));
+    strlcpy(s->google_sheets_secret, item->valuestring, sizeof(s->google_sheets_secret));
   }
 
   item = cJSON_GetObjectItem(root, "idle_pulse_period_ms");
-  s.idle_pulse_period_ms = cJSON_IsNumber(item) ? (uint16_t) item->valuedouble : 0;
+  s->idle_pulse_period_ms = cJSON_IsNumber(item) ? (uint16_t) item->valuedouble : 0;
 
   item = cJSON_GetObjectItem(root, "fast_pulse_period_ms");
-  s.fast_pulse_period_ms = cJSON_IsNumber(item) ? (uint16_t) item->valuedouble : 0;
+  s->fast_pulse_period_ms = cJSON_IsNumber(item) ? (uint16_t) item->valuedouble : 0;
 
   item = cJSON_GetObjectItem(root, "rate_deadband_c_per_min");
-  s.rate_deadband_c_per_min = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
+  s->rate_deadband_c_per_min = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
 
   item = cJSON_GetObjectItem(root, "color_transition_exponent");
-  s.color_transition_exponent = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
+  s->color_transition_exponent = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
 
   // Older API clients omit colours: retain those already saved. Explicit
   // values must be exactly #RRGGBB; never truncate invalid input into validity.
-  s.pagekite = current.pagekite;
-  item = cJSON_GetObjectItemCaseSensitive(root, "pagekite_enabled");
-  if (item && !cJSON_IsBool(item)) goto invalid_pagekite;
-  if (item) s.pagekite.enabled = cJSON_IsTrue(item);
-  const char *pk_keys[] = {"pagekite_domain", "pagekite_secret", "pagekite_custom_domain"};
-  char *pk_values[] = {s.pagekite.domain, s.pagekite.secret, s.pagekite.custom_domain};
-  for (int i = 0; i < 3; i++) {
-    item = cJSON_GetObjectItemCaseSensitive(root, pk_keys[i]);
+  s->pagekite = current->pagekite; // old storage prefix; not an active tunnel
+  s->cloudflare = current->cloudflare;
+  item = cJSON_GetObjectItemCaseSensitive(root, "cloudflare_enabled");
+  if (item && !cJSON_IsBool(item)) goto invalid_cloudflare;
+  if (item) s->cloudflare.enabled = cJSON_IsTrue(item);
+  item = cJSON_GetObjectItemCaseSensitive(root, "cloudflare_connections");
+  if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
+      item->valuedouble < 1 || item->valuedouble > 4 || floor(item->valuedouble) != item->valuedouble)) goto invalid_cloudflare;
+  if (item) s->cloudflare.connections = (uint32_t)item->valuedouble;
+  const char *cf_keys[] = {"cloudflare_hostname", "cloudflare_token"};
+  char *cf_values[] = {s->cloudflare.hostname, s->cloudflare.token};
+  size_t cf_sizes[] = {sizeof s->cloudflare.hostname, sizeof s->cloudflare.token};
+  for (int i = 0; i < 2; i++) {
+    item = cJSON_GetObjectItemCaseSensitive(root, cf_keys[i]);
     if (!item) continue;
-    if (!cJSON_IsString(item) || strlen(item->valuestring) >= SETTINGS_PAGEKITE_TEXT_MAX_LEN) goto invalid_pagekite;
-    // Empty/omitted secret retains the stored value, including on LAN saves.
-    if (i == 1 && !*item->valuestring) continue;
-    strcpy(pk_values[i], item->valuestring);
-    if (i != 1) for (char *c = pk_values[i]; *c; c++) *c = tolower((unsigned char)*c);
+    if (!cJSON_IsString(item) || strlen(item->valuestring) >= cf_sizes[i]) goto invalid_cloudflare;
+    if (i == 1 && !*item->valuestring) continue; // blank preserves stored token
+    strcpy(cf_values[i], item->valuestring);
+    if (i == 0) for (char *c = cf_values[i]; *c; c++) *c = tolower((unsigned char)*c);
   }
   item = cJSON_GetObjectItemCaseSensitive(root, "minimum_brightness");
   if (item != NULL && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
       item->valuedouble < 0 || item->valuedouble > 255 || floor(item->valuedouble) != item->valuedouble)) {
     cJSON_Delete(root);
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Minimum brightness must be an integer from 0 to 255");
+    free(snapshots);
     return ESP_FAIL;
   }
-  s.minimum_brightness = item == NULL ? current.minimum_brightness : (uint32_t) item->valuedouble;
+  s->minimum_brightness = item == NULL ? current->minimum_brightness : (uint32_t) item->valuedouble;
   item = cJSON_GetObjectItemCaseSensitive(root, "maximum_brightness");
   if (item != NULL && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
       item->valuedouble < 0 || item->valuedouble > 255 || floor(item->valuedouble) != item->valuedouble)) {
     cJSON_Delete(root);
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Maximum brightness must be an integer from 0 to 255");
+    free(snapshots);
     return ESP_FAIL;
   }
-  s.maximum_brightness = item == NULL ? current.maximum_brightness : (uint32_t) item->valuedouble;
+  s->maximum_brightness = item == NULL ? current->maximum_brightness : (uint32_t) item->valuedouble;
   item = cJSON_GetObjectItemCaseSensitive(root, "breathing_exponent");
-  s.breathing_exponent = item == NULL ? current.breathing_exponent :
+  s->breathing_exponent = item == NULL ? current->breathing_exponent :
                         cJSON_IsNumber(item) ? (float) item->valuedouble : NAN;
   const char *keys[] = {"zone_cold_color", "zone_optimal_color", "zone_hot_color"};
-  char *colors[] = {s.zone_cold_color, s.zone_optimal_color, s.zone_hot_color};
-  const char *previous[] = {current.zone_cold_color, current.zone_optimal_color, current.zone_hot_color};
+  char *colors[] = {s->zone_cold_color, s->zone_optimal_color, s->zone_hot_color};
+  const char *previous[] = {current->zone_cold_color, current->zone_optimal_color, current->zone_hot_color};
   for (int i = 0; i < 3; i++) {
     item = cJSON_GetObjectItemCaseSensitive(root, keys[i]);
     if (item == NULL) {
@@ -691,15 +718,17 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
     } else {
       cJSON_Delete(root);
       httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Colours must be #RRGGBB");
+      free(snapshots);
       return ESP_FAIL;
     }
   }
   cJSON_Delete(root);
 
-  esp_err_t err = settings_set(&s);
+  esp_err_t err = settings_set(s);
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "Rejected settings update: %s", esp_err_to_name(err));
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid settings values");
+    free(snapshots);
     return ESP_FAIL;
   }
 
@@ -710,15 +739,17 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
 
   httpd_resp_set_type(req, "application/json");
   char response[128];
-  snprintf(response, sizeof(response), "{\"success\":true,\"settings_revision\":%lu,\"pagekite_secret_set\":%s}",
-           (unsigned long) revision, *s.pagekite.secret ? "true" : "false");
+  snprintf(response, sizeof(response), "{\"success\":true,\"settings_revision\":%lu,\"cloudflare_token_set\":%s}",
+           (unsigned long) revision, *s->cloudflare.token ? "true" : "false");
   httpd_resp_sendstr(req, response);
-  if (memcmp(&current.pagekite, &s.pagekite, sizeof s.pagekite)) pagekite_tunnel_start();
+  if (memcmp(&current->cloudflare, &s->cloudflare, sizeof s->cloudflare)) cloudflare_tunnel_start();
+  free(snapshots);
   return ESP_OK;
 
-invalid_pagekite:
+invalid_cloudflare:
   cJSON_Delete(root);
-  httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid PageKite setting type or length");
+  httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid Cloudflare setting type or length");
+  free(snapshots);
   return ESP_FAIL;
 }
 
@@ -728,10 +759,6 @@ static const httpd_uri_t settings_post_uri = {
     .handler = settings_post_handler,
 };
 
-static const httpd_uri_t tunnel_settings_post_uri = {
-    .uri = "/api/tunnel/settings", .method = HTTP_POST,
-    .handler = settings_post_handler, .user_ctx = (void *)1,
-};
 
 // The fixed woodstove-event taxonomy, ported verbatim from the original
 // ESPHome sidecar's own template buttons (same slugs, so any future
@@ -795,6 +822,67 @@ static void event_log_push(const char *slug) {
   if (s_event_log_count < EVENT_LOG_CAPACITY) {
     s_event_log_count++;
   }
+}
+
+// The Mac owns the backup and elapsed time; import/export run on the shared
+// HTTP task. Sensor sampling uses its existing mutex.
+
+static esp_err_t history_apply(history_snapshot_t *saved) {
+  uint32_t now = esp_timer_get_time() / 1000000;
+  if (!history_snapshot_valid(saved, EVENT_COUNT) ||
+      !history_snapshot_rebase(saved, now)) return ESP_ERR_INVALID_ARG;
+  esp_err_t err = sensors_merge_history(saved->samples, saved->sample_count, now);
+  if (err != ESP_OK) return err;
+  logged_event_t fresh[EVENT_LOG_CAPACITY];
+  size_t n = s_event_log_count;
+  size_t start = (s_event_log_head + EVENT_LOG_CAPACITY - n) % EVENT_LOG_CAPACITY;
+  for (size_t i = 0; i < n; i++) fresh[i] = s_event_log[(start + i) % EVENT_LOG_CAPACITY];
+  s_event_log_head = s_event_log_count = 0;
+  size_t a = 0, b = 0;
+  while (a < saved->event_count || b < n) {
+    bool same = a < saved->event_count && b < n && saved->events[a].age_s == now - fresh[b].uptime_s &&
+                EVENTS[saved->events[a].event_id].slug == fresh[b].slug;
+    bool old = !same && a < saved->event_count && (b == n || saved->events[a].age_s >= now - fresh[b].uptime_s);
+    logged_event_t event = old ? (logged_event_t){now - saved->events[a].age_s, EVENTS[saved->events[a].event_id].slug} : fresh[b];
+    if (old || same) a++;
+    if (!old) b++;
+    s_event_log[s_event_log_head] = event;
+    s_event_log_head = (s_event_log_head + 1) % EVENT_LOG_CAPACITY;
+    if (s_event_log_count < EVENT_LOG_CAPACITY) s_event_log_count++;
+  }
+  return ESP_OK;
+}
+
+esp_err_t rest_api_history_export(void *buffer, size_t *size) {
+  if (!buffer) { *size = sizeof(history_snapshot_t); return ESP_OK; }
+  if (*size != sizeof(history_snapshot_t)) return ESP_ERR_INVALID_SIZE;
+  history_snapshot_t *saved = buffer;
+  memset(saved, 0, sizeof *saved);
+  saved->version = HISTORY_SNAPSHOT_VERSION;
+  // saved_at is stamped by the Mac after receipt; device wall-clock is irrelevant.
+  uint32_t now = esp_timer_get_time() / 1000000;
+  saved->sample_count = sensors_get_history(saved->samples, SENSORS_HISTORY_CAPACITY);
+  for (size_t i = 0; i < saved->sample_count; i++) saved->samples[i].uptime_s = now - saved->samples[i].uptime_s;
+  saved->event_count = s_event_log_count;
+  size_t start = (s_event_log_head + EVENT_LOG_CAPACITY - s_event_log_count) % EVENT_LOG_CAPACITY;
+  for (size_t i = 0; i < s_event_log_count; i++) {
+    logged_event_t *e = &s_event_log[(start + i) % EVENT_LOG_CAPACITY];
+    saved->events[i].age_s = now - e->uptime_s;
+    for (size_t id = 0; id < EVENT_COUNT; id++) if (e->slug == EVENTS[id].slug) saved->events[i].event_id = id;
+  }
+  return history_snapshot_valid(saved, EVENT_COUNT) ? ESP_OK : ESP_ERR_INVALID_ARG;
+}
+
+// RAM-only restore of a Mac-owned snapshot, rebased by the supplied elapsed time.
+esp_err_t rest_api_history_import(const char *body, size_t size) {
+  if (size != sizeof(history_snapshot_t)) return ESP_ERR_INVALID_SIZE;
+  history_snapshot_t *saved = buffer_memory_alloc(size);
+  if (!saved) return ESP_ERR_NO_MEM;
+  memcpy(saved, body, size);
+  esp_err_t err = ESP_ERR_INVALID_ARG;
+  if (history_snapshot_valid(saved, EVENT_COUNT)) err = history_apply(saved);
+  free(saved);
+  return err;
 }
 
 static esp_err_t events_get_handler(httpd_req_t *req) {
@@ -892,8 +980,8 @@ static const httpd_uri_t event_post_uri = {
     .handler = event_post_handler,
 };
 
-// Backs the web UI's 24h graph. Samples are downsampled to ~4min
-// resolution (see sensors.h's history_sample_t) and events are the last
+// Backs the web UI's graph. Samples use a four-minute cadence with stable
+// runs compressed (see sensors.h's history_sample_t); events are the last
 // EVENT_LOG_CAPACITY logged annotations, both returned oldest-first as
 // compact [age_s, ...] arrays rather than repeated-key objects, to keep
 // this cheap to build even at (a still-small) 360+64 entries. age_s is
@@ -968,27 +1056,27 @@ static const httpd_uri_t settings_status_uri = {
     .uri = "/api/settings/status", .method = HTTP_GET, .handler = settings_status_handler,
 };
 
-static esp_err_t pagekite_status_handler(httpd_req_t *req) {
+static esp_err_t cloudflare_status_handler(httpd_req_t *req) {
   if (auth_required(req)) return ESP_FAIL;
-  pagekite_status_t status;
-  pagekite_tunnel_get_status(&status);
+  cloudflare_status_t status;
+  cloudflare_tunnel_get_status(&status);
   const char *state = "unavailable";
   switch (status.state) {
-    case PAGEKITE_STATUS_DISABLED: state = "disabled"; break;
-    case PAGEKITE_STATUS_CONNECTING: state = "connecting"; break;
-    case PAGEKITE_STATUS_CONNECTED: state = "connected"; break;
-    case PAGEKITE_STATUS_AUTH_ERROR: state = "auth_error"; break;
-    case PAGEKITE_STATUS_NETWORK_ERROR: state = "network_error"; break;
+    case CLOUDFLARE_STATUS_DISABLED: state = "disabled"; break;
+    case CLOUDFLARE_STATUS_CONNECTING: state = "connecting"; break;
+    case CLOUDFLARE_STATUS_CONNECTED: state = "connected"; break;
+    case CLOUDFLARE_STATUS_AUTH_ERROR: state = "auth_error"; break;
+    case CLOUDFLARE_STATUS_NETWORK_ERROR: state = "network_error"; break;
   }
-  char json[96];
-  snprintf(json, sizeof(json), "{\"state\":\"%s\",\"retry_in_s\":%lu}",
-           state, (unsigned long)status.retry_in_s);
+  char json[160];
+  snprintf(json, sizeof(json), "{\"state\":\"%s\",\"connections\":%lu,\"configured_connections\":%lu}",
+           state, (unsigned long)status.connections, (unsigned long)status.configured_connections);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   return httpd_resp_sendstr(req, json);
 }
-static const httpd_uri_t pagekite_status_uri = {
-    .uri = "/api/pagekite/status", .method = HTTP_GET, .handler = pagekite_status_handler,
+static const httpd_uri_t cloudflare_status_uri = {
+    .uri = "/api/cloudflare/status", .method = HTTP_GET, .handler = cloudflare_status_handler,
 };
 
 // Explicit, not just relying on HTTPD_DEFAULT_CONFIG()'s own default (also
@@ -1007,6 +1095,9 @@ httpd_handle_t rest_api_start(void) {
   dashboard_auth_init();
   httpd_handle_t server = NULL;
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  // Browser cookies and Cloudflare forwarding headers can exceed the 1 KB default.
+  // HTTPD grows its request buffer on demand, up to this bound.
+  config.max_req_hdr_len = 4096;
   config.stack_size = HTTP_STACK_BYTES;  // shared with OTA; keep existing 8192 bytes
   // default (8) is too few once ota + ws + web_ui + this project's own
   // endpoints are all registered -- 17 handlers as of the 4 embedded-font
@@ -1039,11 +1130,9 @@ httpd_handle_t rest_api_start(void) {
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &wifi_get_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &devices_wifi_get_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_get_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &tunnel_settings_get_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_status_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &pagekite_status_uri));
+  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &cloudflare_status_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_post_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &tunnel_settings_post_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &events_get_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &event_post_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &history_get_uri));
@@ -1056,6 +1145,7 @@ httpd_handle_t rest_api_start(void) {
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_css_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_alpine_js_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_font_caprasimo_400_uri));
+  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_font_figtree_variable_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_font_figtree_400_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_font_figtree_600_uri));
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_font_figtree_700_uri));

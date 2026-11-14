@@ -50,10 +50,10 @@ EVENT_LABEL = {e["slug"]: e["label"] for e in EVENTS}
 
 settings = {
     "settings_revision": 1,
-    "pagekite_enabled": False,
-    "pagekite_domain": "",
-    "pagekite_custom_domain": "",
-    "pagekite_secret_set": False,
+    "cloudflare_enabled": False,
+    "cloudflare_hostname": "",
+    "cloudflare_connections": 1,
+    "cloudflare_token_set": False,
     "log_heartbeat_min": 15,
     "zone_cold_max_c": 150,
     "zone_optimal_max_c": 280,
@@ -72,11 +72,11 @@ settings = {
     "zone_optimal_color": "#ff3700",
     "zone_hot_color": "#ff0000",
 }
-if os.environ.get("MOCK_PAGEKITE_ENABLED", "false").lower() == "true":
-    settings["pagekite_enabled"] = True
-    settings["pagekite_domain"] = os.environ.get("MOCK_PAGEKITE_DOMAIN", "flumonitor-vanutsteen.pagekite.me")
-    settings["pagekite_custom_domain"] = os.environ.get("MOCK_PAGEKITE_CUSTOM_DOMAIN", "")
-    settings["pagekite_secret_set"] = True
+if os.environ.get("MOCK_CLOUDFLARE_ENABLED", "false").lower() == "true":
+    settings["cloudflare_enabled"] = True
+    settings["cloudflare_hostname"] = os.environ.get("MOCK_CLOUDFLARE_DOMAIN", "cf-test.example.nl")
+    settings["cloudflare_connections"] = 1
+    settings["cloudflare_token_set"] = True
 
 # Synthetic Bosch state for UI development only; never contacts Bosch.
 bosch = {"state": "disconnected", "linked": False, "available": False,
@@ -195,6 +195,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
 
+        if path in ("/fonts/figtree-400.woff2", "/fonts/figtree-600.woff2", "/fonts/figtree-700.woff2"):
+            self._file(WEB_UI_DIR, "fonts/figtree-variable.woff2", "font/woff2")
+            return
+
         if path == "/startup.png":
             from urllib.parse import parse_qs
             size = parse_qs(urlparse(self.path).query).get("size", [""])[0]
@@ -205,6 +209,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         static = {
+            "/fonts/figtree-variable.woff2": (WEB_UI_DIR, "fonts/figtree-variable.woff2", "font/woff2"),
             "/service-worker.js": (WEB_UI_DIR, "service-worker.js", "application/javascript"),
             "/loading.html": (WEB_UI_DIR, "loading.html", "text/html"),
             "/flue-icon-stove.svg": (WEB_UI_DIR, "flue-icon-stove.svg", "image/svg+xml"),
@@ -249,12 +254,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(bosch)
             return
 
-        if path == "/api/pagekite/status":
-            default_state = "connected" if settings["pagekite_enabled"] else "disabled"
-            state = os.environ.get("MOCK_PAGEKITE_STATUS", default_state)
-            payload = {"state": state}
+        if path == "/api/cloudflare/status":
+            default_state = "connected" if settings["cloudflare_enabled"] else "disabled"
+            state = os.environ.get("MOCK_CLOUDFLARE_STATUS", default_state)
+            payload = {"state": state, "connections": settings["cloudflare_connections"] if state == "connected" else 0, "configured_connections": settings["cloudflare_connections"]}
             if state in ("auth_error", "network_error"):
-                payload["retry_in_s"] = int(os.environ.get("MOCK_PAGEKITE_RETRY_IN_S", "16"))
+                payload["retry_in_s"] = int(os.environ.get("MOCK_CLOUDFLARE_RETRY_IN_S", "16"))
             self._json(payload)
             return
 
@@ -308,13 +313,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/api/settings":
-            if data.get("pagekite_secret"):
-                settings["pagekite_secret_set"] = True
+            if data.get("cloudflare_token"):
+                settings["cloudflare_token_set"] = True
             for k in settings:
-                if k in data and k not in ("settings_revision", "pagekite_secret_set"):
+                if k in data and k not in ("settings_revision", "cloudflare_token_set"):
                     settings[k] = data[k]
             settings["settings_revision"] += 1
-            self._json({"success": True, "settings_revision": settings["settings_revision"], "pagekite_secret_set": settings["pagekite_secret_set"]})
+            self._json({"success": True, "settings_revision": settings["settings_revision"], "cloudflare_token_set": settings["cloudflare_token_set"]})
             return
 
         if path == "/api/event":

@@ -12,7 +12,7 @@ extern "C" {
 #define SETTINGS_SHEETS_SECRET_MAX_LEN  64
 
 #define SETTINGS_PAGEKITE_TEXT_MAX_LEN 128
-// Stored in device NVS; shared secret is never returned by the API.
+// Historical NVS prefix only. Retain layout for migration; no active client.
 typedef struct {
   uint32_t enabled;
   char domain[SETTINGS_PAGEKITE_TEXT_MAX_LEN];
@@ -20,6 +20,15 @@ typedef struct {
   char secret[SETTINGS_PAGEKITE_TEXT_MAX_LEN];
   char custom_domain[SETTINGS_PAGEKITE_TEXT_MAX_LEN]; // optional CNAME host, registered alongside the PageKite hostname
 } pagekite_settings_t;
+
+#define SETTINGS_CLOUDFLARE_HOST_MAX_LEN 128
+#define SETTINGS_CLOUDFLARE_TOKEN_MAX_LEN 4096
+typedef struct {
+  uint32_t enabled;
+  uint32_t connections;
+  char hostname[SETTINGS_CLOUDFLARE_HOST_MAX_LEN];
+  char token[SETTINGS_CLOUDFLARE_TOKEN_MAX_LEN];
+} cloudflare_settings_t;
 
 // Runtime-editable tunables -- replaces the ESPHome sidecar's YAML
 // `substitutions:` block. NVS-backed (see settings.c), with config.h's
@@ -48,7 +57,8 @@ typedef struct {
   float breathing_exponent;  // 0.3..3.0; 1.0 preserves the original envelope
   uint32_t maximum_brightness; // 0..255, must be >= minimum
   uint32_t minimum_brightness; // 0..255, LED channel floor
-  pagekite_settings_t pagekite; // append only, migrates the previous NVS layout
+  pagekite_settings_t pagekite; // legacy storage prefix only; no PageKite client
+  cloudflare_settings_t cloudflare;
 } settings_t;
 
 // Loads settings from NVS, seeding config.h's compile-time defaults if NVS
@@ -61,7 +71,9 @@ void settings_init(void);
 // Copies the current settings into *out. Safe to call from any task --
 // internally mutex-guarded against a concurrent settings_set().
 void settings_get(settings_t *out);
-void settings_get_pagekite(pagekite_settings_t *out);
+void settings_get_cloudflare(cloudflare_settings_t *out);
+// Atomic pair for sensor classification, without copying credentials/settings.
+void settings_get_zone_limits(float *cold_max_c, float *optimal_max_c);
 
 // Validates and persists new settings, replacing the current ones entirely
 // (matches the REST API's POST /api/settings, which always sends the whole

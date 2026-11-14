@@ -1,6 +1,8 @@
 #include "sensors.h"
 
 #include <string.h>
+#include <stdlib.h>
+#include <math.h>
 
 #include "i2cdev.h"
 #include "mcp960x.h"
@@ -86,12 +88,12 @@ static float compute_thermocouple_rate_c_per_min(void) {
 }
 
 static thermocouple_zone_t classify_zone(float c) {
-  settings_t s;
-  settings_get(&s);
-  if (c <= s.zone_cold_max_c) {
+  float cold_max_c, optimal_max_c;
+  settings_get_zone_limits(&cold_max_c, &optimal_max_c);
+  if (c <= cold_max_c) {
     return THERMOCOUPLE_ZONE_COLD;
   }
-  if (c <= s.zone_optimal_max_c) {
+  if (c <= optimal_max_c) {
     return THERMOCOUPLE_ZONE_OPTIMAL;
   }
   return THERMOCOUPLE_ZONE_HOT;
@@ -124,19 +126,39 @@ static void thermocouple_update_regression(float c) {
 static sensor_reading_t s_last_reading;
 static SemaphoreHandle_t s_last_reading_mutex;
 
-// 24h history ring buffer for GET /api/history's graph -- pushed at a
-// coarser cadence than sensors_read()'s own 10s tick (see
-// HISTORY_PUSH_EVERY_N below), guarded by the same mutex as s_last_reading
-// since both are only ever written together, from the same sensors_read()
-// call. Capacity is SENSORS_HISTORY_CAPACITY (sensors.h), not a private
-// define here, since rest_api.c's GET /api/history handler needs to know
-// it too.
+// History is sampled every four minutes. Stable runs retain their first and
+// latest points; the fixed-capacity ring can therefore span longer than 24h.
+// Guarded by s_last_reading_mutex, including replacement of the newest point.
 #define HISTORY_PUSH_EVERY_N (240000 / SENSOR_READ_INTERVAL_MS)
 _Static_assert(240000 % SENSOR_READ_INTERVAL_MS == 0, "History must retain a four-minute interval");
 static history_sample_t *s_history;
 static size_t s_history_count = 0;  // valid entries so far, caps at SENSORS_HISTORY_CAPACITY
 static size_t s_history_head = 0;   // index the next push writes to
 static uint32_t s_history_tick = 0;
+
+// Compare against the retained start, never only against the previous sample:
+// small successive changes must not hide a gradual rise or fall.
+static bool history_same_level(const history_sample_t *a, const history_sample_t *b) {
+  return a->thermocouple_zone == b->thermocouple_zone &&
+         a->thermocouple_c == b->thermocouple_c &&
+         fabsf(a->thermocouple_rate_c_per_min - b->thermocouple_rate_c_per_min) <= 0.05f;
+}
+
+static void history_push(history_sample_t sample) {
+  sample.thermocouple_c = roundf(sample.thermocouple_c);
+  if (s_history_count >= 2) {
+    size_t newest = (s_history_head + SENSORS_HISTORY_CAPACITY - 1) % SENSORS_HISTORY_CAPACITY;
+    size_t anchor = (s_history_head + SENSORS_HISTORY_CAPACITY - 2) % SENSORS_HISTORY_CAPACITY;
+    if (history_same_level(&s_history[anchor], &s_history[newest]) &&
+        history_same_level(&s_history[anchor], &sample)) {
+      s_history[newest] = sample;
+      return;
+    }
+  }
+  s_history[s_history_head] = sample;
+  s_history_head = (s_history_head + 1) % SENSORS_HISTORY_CAPACITY;
+  if (s_history_count < SENSORS_HISTORY_CAPACITY) s_history_count++;
+}
 
 // If a device was left holding the bus (e.g. SCL/SDA still low mid-transaction
 // from an earlier reset/reflash), the new i2c_master driver's own bus/device
@@ -349,16 +371,12 @@ void sensors_read(sensor_reading_t *out) {
   // implausible reading just doesn't get a history point this tick, rather
   // than recording a false dip to 0.0C on the 24h graph.
   if (s_history && plausible && (s_history_tick++ % HISTORY_PUSH_EVERY_N) == 0) {
-    s_history[s_history_head] = (history_sample_t){
+    history_push((history_sample_t){
         .uptime_s = (uint32_t) (esp_timer_get_time() / 1000000),
         .thermocouple_c = out->thermocouple_c,
         .thermocouple_rate_c_per_min = out->thermocouple_rate_c_per_min,
         .thermocouple_zone = out->thermocouple_zone,
-    };
-    s_history_head = (s_history_head + 1) % SENSORS_HISTORY_CAPACITY;
-    if (s_history_count < SENSORS_HISTORY_CAPACITY) {
-      s_history_count++;
-    }
+    });
   }
   xSemaphoreGive(s_last_reading_mutex);
 }
@@ -381,4 +399,27 @@ size_t sensors_get_history(history_sample_t *out, size_t max_out) {
   }
   xSemaphoreGive(s_last_reading_mutex);
   return n;
+}
+
+// Merge a saved timeline with the readings taken since this boot. Timestamp
+// subtraction deliberately uses uint32_t wraparound for pre-boot samples.
+esp_err_t sensors_merge_history(const history_sample_t *saved, size_t count, uint32_t now) {
+  if (!s_history || count > SENSORS_HISTORY_CAPACITY) return ESP_ERR_INVALID_STATE;
+  history_sample_t *fresh = buffer_memory_alloc(SENSORS_HISTORY_CAPACITY * sizeof *fresh);
+  if (!fresh) return ESP_ERR_NO_MEM;
+  xSemaphoreTake(s_last_reading_mutex, portMAX_DELAY);
+  size_t n = s_history_count;
+  size_t oldest = (s_history_head + SENSORS_HISTORY_CAPACITY - n) % SENSORS_HISTORY_CAPACITY;
+  for (size_t i = 0; i < n; i++) fresh[i] = s_history[(oldest + i) % SENSORS_HISTORY_CAPACITY];
+  s_history_count = s_history_head = 0;
+  size_t a = 0, b = 0;
+  while (a < count || b < n) {
+    if (a < count && b < n && now - saved[a].uptime_s == now - fresh[b].uptime_s) a++;
+    if (a < count && (b == n || now - saved[a].uptime_s > now - fresh[b].uptime_s))
+      history_push(saved[a++]);
+    else if (b < n) history_push(fresh[b++]);
+  }
+  xSemaphoreGive(s_last_reading_mutex);
+  free(fresh);
+  return ESP_OK;
 }

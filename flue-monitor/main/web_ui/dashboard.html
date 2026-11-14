@@ -42,6 +42,7 @@
 <meta name="color-scheme" content="light">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
+  @font-face { font-family: 'Figtree'; font-style: normal; font-weight: 400 700; font-display: swap; src: url('/fonts/figtree-variable.woff2') format('woff2'); }
 html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
 #startup{position:fixed;inset:0;z-index:100;background:#f5ead8;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center;font:17px/1.5 system-ui,sans-serif}
 #startup,#startup *{box-sizing:border-box}
@@ -54,16 +55,11 @@ html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
 @media(prefers-reduced-motion:reduce){.startup-spinner{animation:none}}
 </style>
 <link rel="preload" href="/fonts/caprasimo-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/fonts/figtree-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/fonts/figtree-600.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/fonts/figtree-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/figtree-variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css">
 <link rel="stylesheet" href="/vendor/uplot.min.css">
 <style>
   @font-face { font-family: 'Caprasimo'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/caprasimo-400.woff2') format('woff2'); }
-  @font-face { font-family: 'Figtree'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/figtree-400.woff2') format('woff2'); }
-  @font-face { font-family: 'Figtree'; font-style: normal; font-weight: 600; font-display: swap; src: url('/fonts/figtree-600.woff2') format('woff2'); }
-  @font-face { font-family: 'Figtree'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/figtree-700.woff2') format('woff2'); }
   /* min-height: 100vh, then 100dvh right after to override it where
      supported -- iOS Safari's 100vh is sized to the browser-chrome-
      COLLAPSED viewport (taller than what's actually visible on load, with
@@ -154,13 +150,13 @@ html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
   .stepper .stepper-value { min-width: 68px; text-align: center; font-weight: 700; font-size: 14px; }
   .text-field { padding: 10px 16px 14px; }
   .text-field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-  .pagekite-status { display: flex; gap: 10px; align-items: flex-start; margin: 0 4px 4px; padding: 13px 16px; border-radius: 20px; background: var(--color-surface); }
-  .pagekite-status-icon { width: 10px; height: 10px; margin-top: 5px; border-radius: 50%; flex: 0 0 auto; background: var(--color-neutral-500); }
-  .pagekite-status.connected .pagekite-status-icon { background: #427656; }
-  .pagekite-status.connecting .pagekite-status-icon, .pagekite-status.network_error .pagekite-status-icon { background: #b56a18; }
-  .pagekite-status.auth_error .pagekite-status-icon { background: #b54132; }
-  .pagekite-status-title { font-size: 14px; font-weight: 700; }
-  .pagekite-status-detail { margin-top: 3px; color: var(--color-neutral-700); font-size: 12px; line-height: 1.45; }
+  .cloudflare-status { display: flex; gap: 10px; align-items: flex-start; margin: 0 4px 4px; padding: 13px 16px; border-radius: 20px; background: var(--color-surface); }
+  .cloudflare-status-icon { width: 10px; height: 10px; margin-top: 5px; border-radius: 50%; flex: 0 0 auto; background: var(--color-neutral-500); }
+  .cloudflare-status.connected .cloudflare-status-icon { background: #427656; }
+  .cloudflare-status.connecting .cloudflare-status-icon, .cloudflare-status.network_error .cloudflare-status-icon { background: #b56a18; }
+  .cloudflare-status.auth_error .cloudflare-status-icon { background: #b54132; }
+  .cloudflare-status-title { font-size: 14px; font-weight: 700; }
+  .cloudflare-status-detail { margin-top: 3px; color: var(--color-neutral-700); font-size: 12px; line-height: 1.45; }
   .save-bar { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 15; max-width: 428px; margin: 0 auto; padding: 8px 8px 8px 20px; border-radius: 999px; background: var(--color-text); color: var(--color-bg); display: flex; align-items: center; gap: 10px; box-shadow: var(--shadow-lg); }
   .save-bar span { flex: 1; font-size: 14px; font-weight: 600; }
   .save-bar button { height: 44px; border-radius: 999px; border: none; font: inherit; font-weight: 600; cursor: pointer; padding: 0 18px; }
@@ -267,7 +263,7 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
       </div>
 
       <div class="footer-nav">
-        <button @click="openGraph()">Last 24 hours →</button>
+        <button @click="openGraph()">Burn history →</button>
       </div>
     </div>
   </template>
@@ -295,7 +291,7 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
 
   <!-- ============ History graph ============ -->
   <template x-if="view === 'graph'">
-    <div class="graph-screen" x-data="burnGraph(graphState)" x-effect="update(history, reading, settings, historyLoaded, events, historyReceivedMs)">
+    <div class="graph-screen" x-data="burnGraph()" x-effect="update(history, reading, settings, historyLoaded, events, historyReceivedMs)">
       <div class="topbar" style="padding:0">
         <button class="btn btn-secondary" style="height:44px;gap:4px;padding:0 16px 0 10px" @click="view = 'dashboard'">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
@@ -524,7 +520,7 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
         <div class="field-list">
           <div class="text-field">
             <label for="auth-current-password">Change dashboard password</label>
-            <small class="field-help" style="margin-bottom:8px">Protects this dashboard on your home network and through PageKite. Changing it signs out the current session and other browsers.</small>
+            <small class="field-help" style="margin-bottom:8px">Protects this dashboard on your home network and through Cloudflare. Changing it signs out the current session and other browsers.</small>
             <input id="auth-current-password" class="input" type="password" autocomplete="current-password" placeholder="Current password">
           </div>
           <div class="text-field" style="padding-top:0">
@@ -545,33 +541,36 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
       </div>
 
       <div class="field-group">
-        <h6>PageKite</h6>
-        <div class="pagekite-status" :class="pagekiteStatus.state || 'unknown'" x-show="draft.pagekite_enabled" x-cloak role="status" aria-live="polite">
-          <span class="pagekite-status-icon" aria-hidden="true"></span>
+        <h6>Cloudflare Tunnel</h6>
+        <div class="cloudflare-status" :class="cloudflareStatus.state || 'unknown'" x-show="draft.cloudflare_enabled" x-cloak role="status" aria-live="polite">
+          <span class="cloudflare-status-icon" aria-hidden="true"></span>
           <div>
-            <div class="pagekite-status-title" x-text="pagekiteStatusTitle"></div>
-            <div class="pagekite-status-detail" x-text="pagekiteStatusDetail"></div>
+            <div class="cloudflare-status-title" x-text="cloudflareStatusTitle"></div>
+            <div class="cloudflare-status-detail" x-text="cloudflareStatusDetail"></div>
           </div>
         </div>
         <div class="field-list">
           <div class="field-row">
-            <label class="field-label" for="pagekite-enabled">Remote access<small id="pagekite-enabled-help" class="field-help">Enable the tunnel to access this dashboard at your PageKite address. The monitor picks a nearby PageKite relay automatically. Disabling the tunnel keeps your configuration.</small></label>
-            <input id="pagekite-enabled" type="checkbox" aria-describedby="pagekite-enabled-help" x-model="draft.pagekite_enabled" :class="{ changed: changed('pagekite_enabled') }" style="width:24px;height:24px;accent-color:var(--color-accent)">
+            <label class="field-label" for="cloudflare-enabled">Remote access<small id="cloudflare-enabled-help" class="field-help">Enable access through your Cloudflare Tunnel. Disabling the tunnel keeps your configuration.</small></label>
+            <input id="cloudflare-enabled" type="checkbox" aria-describedby="cloudflare-enabled-help" x-model="draft.cloudflare_enabled" :class="{ changed: changed('cloudflare_enabled') }" style="width:24px;height:24px;accent-color:var(--color-accent)">
           </div>
           <div class="text-field">
-            <label for="pagekite-domain">Kite domain</label>
-            <small id="pagekite-domain-help" class="field-help" style="margin-bottom:8px">Your registered PageKite hostname, without https:// or a path. The monitor selects a nearby relay and updates PageKite routing automatically.</small>
-            <input id="pagekite-domain" aria-describedby="pagekite-domain-help" class="input" x-model="draft.pagekite_domain" maxlength="127" autocapitalize="none" spellcheck="false" placeholder="your-kite.pagekite.me">
+            <label for="cloudflare-hostname">Public hostname</label>
+            <small id="cloudflare-hostname-help" class="field-help" style="margin-bottom:8px">The hostname configured for this tunnel in Cloudflare, without https:// or a path.</small>
+            <input id="cloudflare-hostname" aria-describedby="cloudflare-hostname-help" class="input" x-model="draft.cloudflare_hostname" maxlength="127" autocapitalize="none" spellcheck="false" placeholder="fluemonitor.example.nl">
           </div>
           <div class="text-field" style="padding-top:0">
-            <label for="pagekite-custom-domain">Custom domain (optional)</label>
-            <small id="pagekite-custom-domain-help" class="field-help" style="margin-bottom:8px">A custom hostname registered as a CNAME kite in your PageKite account. Point its DNS CNAME to the Kite domain above.</small>
-            <input id="pagekite-custom-domain" aria-describedby="pagekite-custom-domain-help" class="input" x-model="draft.pagekite_custom_domain" maxlength="127" autocapitalize="none" spellcheck="false" placeholder="fluemonitor.example.nl">
+            <label for="cloudflare-token">Connector token</label>
+            <small id="cloudflare-token-help" class="field-help" style="margin-bottom:8px">The tunnel connector token from Cloudflare. Stored on the monitor; leave blank to keep it.</small>
+            <input id="cloudflare-token" aria-describedby="cloudflare-token-help" class="input" type="password" x-model="draft.cloudflare_token" maxlength="4095" autocomplete="off" data-1p-ignore="true" data-lpignore="true" :placeholder="settings.cloudflare_token_set ? 'Saved — enter a replacement to change it' : 'Enter your tunnel connector token'">
           </div>
           <div class="text-field" style="padding-top:0">
-            <label for="pagekite-secret">Shared secret</label>
-            <small id="pagekite-secret-help" class="field-help" style="margin-bottom:8px">The kite's shared secret from your PageKite account, rather than your account password. Stored on the monitor; leave blank to keep it.</small>
-            <input id="pagekite-secret" aria-describedby="pagekite-secret-help" class="input" type="password" x-model="draft.pagekite_secret" maxlength="127" autocomplete="new-password" :placeholder="settings.pagekite_secret_set ? 'Saved — enter a replacement to change it' : 'Enter your kite shared secret'">
+            <label for="cloudflare-connections">Connections</label>
+            <small id="cloudflare-connections-help" class="field-help" style="margin-bottom:8px">Extra connections provide redundancy and use more memory. Start with one.</small>
+            <select id="cloudflare-connections" class="input" aria-describedby="cloudflare-connections-help" x-model.number="draft.cloudflare_connections">
+              <option value="1">1 connection</option><option value="2">2 connections</option>
+              <option value="3">3 connections</option><option value="4">4 connections</option>
+            </select>
           </div>
         </div>
       </div>

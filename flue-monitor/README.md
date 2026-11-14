@@ -66,10 +66,9 @@ The monitor requires the Feather V2's 2 MiB PSRAM for history, JSON, Bosch,
 WebSocket send buffers, settings request bodies and asset decompression buffers.
 These application buffers never fall back to internal RAM. The shared allocator
 uses internal RAM only in builds configured without PSRAM, such as the display.
-PageKite's 4097-byte scratch buffer, stream table and queued requests require
-PSRAM, including request growth. Failed allocation is logged and never falls
-back to internal RAM. Failed growth retains the old request and returns a
-service-unavailable response; failed startup allocation stops the tunnel worker.
+Cloudflare tunnel allocations, HTTP/2 session/frame/header buffers and TLS
+allocations use strict PSRAM, without internal fallback. Temporary SDK objects,
+task stacks, Wi-Fi and DMA allocations remain internal.
 Task stacks and ordinary malloc allocations remain internal. SDK code that
 explicitly requests generic heap capabilities can still select PSRAM.
 Assets themselves stay in flash. Reading telemetry reports both internal RAM
@@ -86,7 +85,7 @@ so the running policy can be checked after deployment. Do not interpret a
 successful build or host allocator test as proof of improved device stability.
 
 `memory.stacks` reports six application tasks (`main`, `sensor`, `sheets`,
-`bosch`, `pagekite`, `http`). Each entry contains `size_bytes`, `min_free_bytes`
+`bosch`, `cloudflare`, `http`). Each entry contains `size_bytes`, `min_free_bytes`
 and `peak_used_estimate_bytes`. The main loop scans lifetime stack high-water
 marks every ten seconds, without an extra task or enabling FreeRTOS tracing.
 Unregistered/unmeasured tasks are omitted. Values reset at reboot and estimate
@@ -121,6 +120,94 @@ scanned list, enter its password, and the device tests the connection live
 wrong password shows an inline error on the same screen instead of a blind
 reboot-and-hope.
 
+## Watchdog diagnostic build
+
+Build the current sources with UART core dumps including registers, task stacks
+and explicitly marked recorder data, a dedicated 2048-byte internal core-dump stack, the
+FreeRTOS stack-end watchpoint, light heap poisoning and the flight recorder:
+
+```sh
+sh tools/build_watchdog_diagnostics.sh --size
+```
+
+The script copies the normal `sdkconfig` and applies
+`sdkconfig.watchdog-diagnostics.defaults` in an isolated build directory. `--size`
+uses size optimization (`-Os`); the ELF retains debug symbols. Omitting it keeps
+the normal optimization setting for a size comparison. Both variants retain
+the existing OTA partition table, services, PSRAM policy, light sleep, task stack
+reservations and 800-ms interrupt watchdog timeout. Neither command flashes.
+
+The size-optimized artifacts are `build/watchdog-diagnostics-size/flue-monitor.bin`
+and its matching `flue-monitor.elf`. Preserve that exact ELF with the capture;
+the regular `build/flue-monitor.elf` describes a different firmware image.
+The normal `ota_flash.sh` selects the regular build, not this diagnostic image.
+
+Continuously record the raw UART at 115200 baud before a failure. The core dump
+is emitted automatically without waiting for Enter; retain the complete
+`CORE DUMP START` through `CORE DUMP END` block as well as the panic/backtrace
+and following boot log. IDF Monitor can decode using the matching diagnostic
+build. Full DRAM/heap capture is disabled: it walks heap locks which a halted
+CPU may own. The November 1 watchdog dump re-entered panic during that walk.
+The diagnostic build rejects that unsafe configuration at compile time.
+Registers, task stacks (including the interrupted stack), and the explicitly
+marked internal flight recorder remain captured without that heap walk.
+Arbitrary heap/PSRAM contents are omitted. A previous controlled abort verified
+the older full-heap mode; the new mode still needs hardware crash verification.
+Capture still depends on the panic handler and readable memory.
+
+The recorder has 96 operational and 32 sleep records per CPU: 4096 bytes plus
+24 bytes of metadata in internal RAM. Separate sleep banks prevent frequent
+sleep transitions from overwriting network events. Records contain a committed
+sequence, clock, event ID, core, flags and numeric value. Operational clocks
+are low 32-bit microseconds (wrap about 71.6 minutes); early sleep callbacks
+use CPU cycles instead (flag bit 0), so these clocks are not directly comparable.
+No payloads/credentials are recorded. A 528-byte RTC tail is replayed at boot
+when its version/commit markers validate; retention is not guaranteed for all
+resets or power loss. Sleep callbacks and record writes execute in IRAM with
+internal data, brief local interrupt masking and no allocation or spinlock.
+
+ESP-IDF 6.0.3's panic RTC watchdog interrupted the first full UART dump after
+about ten seconds. A version-guarded project linker wrapper extends only the
+dump interval to at most ten minutes, then restores ten seconds. Runtime
+IWDT/TWDT settings are unchanged. Its tick conversion uses 64-bit multiplication
+to avoid overflow. Review the private SDK integration when changing IDF.
+
+For a controlled capture test, explicitly build with:
+
+```sh
+sh tools/build_watchdog_diagnostics.sh --size --self-test
+```
+
+Only that separate image accepts `FLUE_DIAG_CRASH` (abort) or `FLUE_DIAG_WDT`
+(interrupt watchdog with a heap lock held), followed by newline on the
+physical console. The watchdog test spins inside IDF's heap-walker callback
+while its heap lock is held. It never crashes automatically and has no network crash
+endpoint. UART receive can miss input during light sleep; normal LAN status
+traffic was used to keep it active while sending the test command. After the
+test, deploy the ordinary diagnostic image without `--self-test`.
+
+Verify a raw capture locally using the exact self-test image's ELF:
+
+```sh
+. ./activate-idf.sh
+python tools/verify_flight_dump.py --serial /path/to/serial.raw \
+  --elf /path/to/exact/flue-monitor.elf --output /path/to/verification
+```
+
+The verifier checks the SDK checksum, exact stack patterns and
+committed recorder entries (including ring wrap and sleep events). Raw dumps
+contain application memory and should stay local; its JSON report prints only
+verification results. The final diagnostic image omits the test task/markers.
+Use `--expect-heap` only for archived full-heap self-test captures. This tool
+requires deliberate test markers; it is not an acceptance test for real crashes.
+
+On 2026-11-01 the `FLUE_DIAG_WDT` hardware test produced a complete,
+checksum-valid dump: known stack markers and102 recorder entries verified,
+and the official6.0.3 decoder identified the test task inside the held-lock
+callback. No nested panic occurred. Capture/ELF/decoded report are archived
+in `.cache/watchdog-captures/controlled-iwdt-20261101/`. This verifies that
+specific watchdog/held-lock scenario, not every possible panic failure.
+
 ## Updating over WiFi (OTA)
 
 ```sh
@@ -132,13 +219,32 @@ cp main/secrets.h.example main/secrets.h   # first time only -- fill in a real r
 `main/secrets.h` is git-ignored; the same secret has to be in it on every
 machine that pushes updates.
 
+The monitor's OTA script first downloads graph samples and event annotations
+to `.cache/ota-history/<timestamp>/history-before.bin` on the Mac. After flashing
+and restarting, it restores them to RAM and verifies them by reading them back.
+The backup and firmware copy remain on the Mac if an update fails. No graph
+snapshot is written to device NVS. A failed backup stops the script before upload.
+
+For an explicit image, or an update without a graph backup:
+
+```sh
+python3 tools/ota_with_history.py . flue-monitor.local --image build/flue-monitor.bin
+python3 tools/ota_with_history.py . flue-monitor.local --without-history
+```
+
+USB recovery uses the same backup/restore flow with `--usb-port PORT` and
+`--expected-mac MAC`. It checks device identity and the partition layout before
+writing only the two application slots; settings, bootloader and partition table
+are preserved. Activate ESP-IDF first so `esptool` is available. The monitor must
+still be reachable over WiFi to download the backup before the USB reset.
+
 ## REST API (once connected to WiFi)
 
 Reading responses and device WebSocket readings include a `memory` object
 with internal byte-addressable free RAM, allocator low-water bytes, largest
 free block, and sampled largest-block minima. Sampling runs every 100 ms
 in the existing main task and on Sheets HTTP events, without an extra task.
-Sheets attempt/completion/success counters and PageKite connection state
+Sheets attempt/completion/success counters and Cloudflare connection state
 help interpret measurements. Byte counts are RAM, not flash. Sampled minima
 can miss shorter peaks; allocator low-water bytes sum the individual heaps'
 historical minima. Zero Sheets minima mean no request has been sampled yet
@@ -160,30 +266,33 @@ settings untouched. On success, it also broadcasts `{"type":"settings_changed"}`
 over `/ws` (see below). The three `zone_*_color` fields accept exactly
 `#RRGGBB`; older clients can omit them to preserve the saved colours.
 
-## PageKite remote access
+## Cloudflare remote access
 
-In **Settings → PageKite**, enter your registered `*.pagekite.me` kite domain
-and its shared secret, then enable Remote access and Save. Use the kite's
-shared secret, not your PageKite account password. The monitor selects the
-fastest certificate-verified relay from PageKite's `frontends.b5p.us` pool,
-then updates your kite's DNS over verified HTTPS. To use a custom hostname,
-also enter it as **Custom domain** after adding it as a CNAME kite in PageKite,
-and point its DNS CNAME at the `*.pagekite.me` kite. The firmware registers
-both names on the same tunnel. Use a DNS CNAME record rather than URL
-forwarding if you want the custom hostname to remain in the browser address
-bar.
+In Cloudflare, create a remotely managed tunnel and a **Published application**
+for your hostname, with service `http://localhost:80`. In the monitor's
+**Settings → Cloudflare Tunnel**, enter the same public hostname and connector
+token, choose 1–4 connections, enable Remote access and Save. Use the connector
+token, not a Global API Key or API token. Tokens are never embedded in firmware.
 
-Configuration persists in device NVS across reboot and firmware updates.
-Changing tunnel settings reconnects it without rebuilding or restarting the
-monitor. Disabling Remote access closes the tunnel and retains the saved
-configuration. The shared secret is masked, never returned by settings APIs,
-and cleared from the form after a successful save. Leaving it blank keeps
-the stored value. Remote settings and event logging remain editable.
+The token is write-only: settings return `cloudflare_token_set`, never the token.
+Blank or omitted tokens preserve the saved value. Configuration persists in NVS;
+saving reconnects gracefully, and disabling closes the tunnel while retaining
+its configuration. Old settings (including reverted panel layouts) retain their
+sensor/display/Sheets values; Cloudflare starts disabled and needs configuration.
+The new blob uses `settings_v2`; `settings_v1` is retained for app rollback.
+The PageKite client is no longer built. Its old blob tail exists only for NVS
+compatibility and is never exposed or used for connections.
+
+Public requests are restricted to the configured HTTPS hostname and dashboard
+route allowlist, and forwarded to fixed loopback HTTP port 80. Remote ingress
+settings cannot select another LAN destination. Cookie, Origin and asset queries
+are preserved. OTA, Wi-Fi setup and the LAN device WebSocket remain private.
+The display's LAN connection is unchanged.
 
 The embedded dashboard asks you to choose a password on first use; do this
 from the monitor's home-network address. Initial setup is blocked through
-PageKite so a remote visitor cannot claim a fresh device. It protects the
-dashboard assets and REST endpoints over LAN and PageKite. Unauthenticated
+Cloudflare so a remote visitor cannot claim a fresh device. It protects the
+dashboard assets and REST endpoints over LAN and Cloudflare. Unauthenticated
 LAN GET /api/settings remains available without credentials for flue-display;
 local commissioning saves are allowed only until the first password is set. The password is
 stored in NVS as a salted PBKDF2-HMAC-SHA-256 hash; the settings API never
@@ -197,8 +306,7 @@ Browsers may preserve session cookies when restoring a previous session. Remembe
 have no server time limit and end on monitor restart. Five failed sign-ins
 cause a 30-second lockout. Password changes invalidate all sessions.
 Remote cookies are Secure and all remote state-changing requests require
-a matching HTTPS Origin. The custom HTTP CNAME redirects to the primary
-PageKite HTTPS dashboard for sign-in. The device WebSocket used by flue-display remains outside dashboard
+a matching HTTPS Origin. The device WebSocket used by flue-display remains outside dashboard
 authentication. The local proxy preview in
 `tools/ui_proxy.py` remains a design prototype and does not secure the device.
 
@@ -208,18 +316,26 @@ clears all NVS settings and is not the intended recovery method. The web
 interface uses HTTP on the local network, so a password entered over plain
 LAN HTTP can be observed by someone able to monitor that network traffic.
 
-`GET /api/pagekite/status` reports `disabled`, `connecting`, `connected`,
-`auth_error`, or `network_error`, with `retry_in_s` while retrying. It never
-returns credentials. The Settings page requests it on entry and refreshes
-every 5 seconds while open; it stops polling when Settings closes.
+`GET /api/cloudflare/status` reports `state`, active `connections` and
+`configured_connections`, without credentials. A connected edge does not prove
+end-to-end public reachability. The Settings page refreshes status while open.
 
-API fields: `pagekite_enabled` (boolean), `pagekite_domain`, optional
-`pagekite_custom_domain`, and write-only `pagekite_secret` (strings, at most
-127 characters).
-`pagekite_secret_set` reports whether a secret is saved. Omitted PageKite
-fields retain their previous values, so older settings clients keep working.
-Enabling requires a domain and shared secret of at least 8 characters.
-These fields apply only to the monitor and do not wait for display acknowledgement.
+Settings fields: `cloudflare_enabled` (boolean), `cloudflare_hostname` (bare
+hostname, maximum 127 characters), `cloudflare_connections` (integer 1–4),
+write-only `cloudflare_token` (maximum 4095 characters) and read-only
+`cloudflare_token_set`. Omitted fields preserve saved values. These monitor-only
+settings do not wait for a display acknowledgement.
+
+The library revision and local changes are in `components/esp_cf_tunnel/UPSTREAM`.
+TLS/PSA, tunnel data and HTTP/2 sessions use strict PSRAM allocation; stacks stay
+internal. Four connections still require hardware qualification with PSRAM and
+the full monitor workload. The no-PSRAM S3 prototype ran out of memory with four.
+Size optimization, link optimization scoped to the two protocol libraries, and
+build-time gzip of the unchanged login template keep the existing OTA partitions.
+
+Host checks: `tools/test_cloudflare_settings.py`, `tools/test_cloudflare_tunnel.py`,
+`tools/test_cloudflare_memory.py`, `tools/test_login_compression.py`, and
+`node tools/test_settings_sync.js`. These do not establish device stability.
 
 ## Woodstove event logging (once connected to WiFi)
 
@@ -318,7 +434,7 @@ an active sign-in URL. `POST /api/bosch` accepts `action` values `start`,
 `callback` (with `callback`), `select` (with `device` and `zone`) and `disconnect`.
 POST returns 202 for queued work; poll GET for completion. Both methods require
 a dashboard session; POST also requires the matching Origin. Both are available
-through PageKite. Tokens and authorization codes are never returned by the API,
+through Cloudflare. Tokens and authorization codes are never returned by the API,
 settings or device WebSocket. The pending sign-in URL contains only public OAuth
 parameters; its PKCE verifier remains private on the monitor.
 
@@ -330,7 +446,7 @@ for pairing where possible. This is an unofficial integration using the Bosch
 app's client ID, based on [ha_bosch](https://github.com/CaseyRo/ha_bosch).
 
 Host checks: `python3 tools/test_bosch.py`, `node tools/test_bosch_ui.js` and
-`python3 tools/test_pagekite.py`. The mock server simulates pairing and an
+`python3 tools/test_cloudflare_tunnel.py`. The mock server simulates pairing and an
 invalid `zn2` reading without contacting Bosch. Hardware pairing and live room-temperature display have been verified. Long-running
 token refresh, restart recovery and Bosch-specific peak memory still need a longer soak.
 
@@ -397,8 +513,8 @@ domains still use the old identifiers.
 | --- | --- | --- |
 | Device discovery (implemented) | `flue-monitor.local`; `flue-display.local` | Change monitor `main/config.h` `MDNS_HOSTNAME`, monitor `main/main.c` instance name via that macro, display `main/config.h` `FLU_MONITOR_MDNS_NAME`, and display `main/flue_poll.c` hostname/instance. Deploy monitor first by confirmed IP (the running display retains its resolved IP), then deploy the display to resolve the new name. Verify settings fetch, WebSocket reconnect and acknowledgements. Update bookmarks and local proxy targets. |
 | Setup Wi-Fi (implemented) | `Flu Monitor Setup` → `Flue Monitor Setup`; `Flu Display Setup` → `Flue Display Setup` | Both `main/config.h` files and both device READMEs. Setup passwords in source are now `flue-monitor-setup` and `flue-display-setup`; deployed firmware keeps its previous password until flashed. |
-| Public domain | `flumonitor.vanutsteen.nl` → `fluemonitor.vanutsteen.nl` | Register the new CNAME kite with PageKite, add DNS CNAME, then update the monitor's stored custom-domain setting. New hostname means a separate browser cookie. Keep the old address during cutover where routing supports it. |
-| Primary PageKite name | `flumonitor-vanutsteen.pagekite.me` → proposed `fluemonitor-vanutsteen.pagekite.me` | Confirm availability/register in PageKite; obtain the correct shared secret, update stored primary-domain configuration and DNS CNAME target. Verify DDNS, TLS, custom-host registration and login. The firmware currently supports one primary and one custom hostname, so concurrent old/new aliases need an explicit migration plan or temporary routing support. |
+| Public domain | `flumonitor.vanutsteen.nl` → `fluemonitor.vanutsteen.nl` | Create the Cloudflare published application and its tunnel CNAME, then configure the same hostname on the monitor after deployment. New hostname means a separate browser cookie. Keep the old address during cutover where routing supports it. |
+| Legacy PageKite name | `flumonitor-vanutsteen.pagekite.me` | Historical production address. The Cloudflare integration removes this client; existing deployed firmware and external routing are unchanged until a separate cutover. |
 | Repository and folders (implemented locally) | `LeonB/flue-monitor`, `flue-monitor/`, `flue-display/` | GitHub repo renamed by owner; origin and local checkout/subfolders updated. Relative paths and documentation links updated. Ignored credentials preserved. Reopen IDE/Codex at the new checkout path. |
 | Build and OTA artifacts (implemented locally) | `project(flue-monitor)` / `project(flue-display)` | Regenerate both builds after moving folders. The shared root `ota_flash.sh` derives the `.bin` name from the project folder. Old generated builds are archived under `/tmp/flue-monitor-rename-builds-20261016`; no partition/NVS reset. |
 | Internal references | `FLU_MONITOR_MDNS_NAME`, `FLU_DISPLAY_TEST_WS_URI`, PageKite client-version string, demo domains and temporary filenames | Update source and build/test scripts together. Preserve historical diagnostic references where useful. These can remain compatibility names until the network/build cutover is complete. |

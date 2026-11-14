@@ -1,0 +1,10 @@
+{
+  "url": "https://github.com/espressif/esp-idf/pull/19359",
+  "draft": true,
+  "fork": "LeonB/esp-idf",
+  "branch": "codex/iwdt-livelock-transition",
+  "head": "fe161f61a333507ba2d3d074fd42c6eb052218ab",
+  "base": "0e6b480f858c69862ffb6001d96e9eef74599a6e",
+  "checkout": "/tmp/esp-idf-iwdt-pr",
+  "validation": "Full master Unity application build passed; 56 selected hardware cases passed; official pre-commit passed without exclusions; external ASan/UBSan passed"
+}

@@ -39,8 +39,9 @@ assets = {
     "uplot_js": root / "main/web_ui/vendor/uplot.min.js",
     "uplot_css": root / "main/web_ui/vendor/uplot.min.css",
     "alpine_js": root.parent / "components/captive_portal/alpine.min.js",
-    **{name.replace("-", "_"): root / f"main/web_ui/fonts/{name}.woff2"
-       for name in ("caprasimo-400", "figtree-400", "figtree-600", "figtree-700")},
+    "caprasimo_400": root / "main/web_ui/fonts/caprasimo-400.woff2",
+    **{f"figtree_{weight}": root / "main/web_ui/fonts/figtree-variable.woff2"
+       for weight in (400, 600, 700)},
 }
 assert assets["css"].read_bytes() == (root.parent / "components/captive_portal/styles.css").read_bytes(), "Shared dashboard/portal CSS must stay identical"
 # Resolve dependencies before hashing their consumers. A changed font therefore
@@ -100,6 +101,21 @@ for name, path in assets.items():
         for offset in range(0, len(compressed), 20):
             lines.append(",".join(str(b) for b in compressed[offset:offset + 20]) + ",")
         lines.append("};")
+# Keep the existing C login template as the single source, but store it only
+# compressed in firmware, just like the other HTML assets. Resolve generated
+# font URLs before compression so cache-version behavior stays identical.
+api_source = (root / "main/rest_api.c").read_text()
+login_source = api_source.split("static const char login_page[] = ", 1)[1].split("\n\nstatic esp_err_t auth_status_handler", 1)[0]
+login_tokens = re.findall(r'"(?:[^"\\]|\\.)*"|ASSET_[A-Za-z0-9_]+_URL', login_source)
+login = "".join(json.loads(token) if token.startswith('"') else versioned_urls[token[6:-4]]
+                for token in login_tokens).encode()
+compressed = gzip.compress(login, compresslevel=9, mtime=0)
+lines.append(f'#define ASSET_login_GZIP_ETAG "{hashlib.sha256(compressed).hexdigest()[:24]}"')
+lines += [f"#define ASSET_login_RAW_SIZE {len(login)}", "static const unsigned char asset_login_gzip[] = {"]
+for offset in range(0, len(compressed), 20):
+    lines.append("  " + ",".join(str(b) for b in compressed[offset:offset + 20]) + ",")
+lines.append("};")
+
 if __name__ == "__main__":
     output = Path(sys.argv[1])
     output.parent.mkdir(parents=True, exist_ok=True)

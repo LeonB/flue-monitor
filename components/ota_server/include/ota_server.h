@@ -20,6 +20,11 @@ extern "C" {
 // Push an update with: ./ota_flash.sh <device-ip-or-hostname>
 void ota_server_register(httpd_handle_t server, const char *secret);
 
+// Optional RAM-only export/import for the Mac's flash backup. GET/POST
+// /ota/history use the same OTA secret, with no effect on the OTA write path.
+void ota_server_set_history_hooks(esp_err_t (*restore)(const char *, size_t),
+                                 esp_err_t (*export_history)(void *, size_t *));
+
 // For a caller with no HTTP server of its own yet (e.g. flue-display, which
 // otherwise runs none): starts a dedicated httpd instance sized for OTA
 // (8192-byte stack -- esp_ota_* calls + logging need more than the 4096

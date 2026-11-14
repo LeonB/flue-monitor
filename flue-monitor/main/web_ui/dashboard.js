@@ -87,7 +87,6 @@ function app() {
   let historyRequest = null;
   return {
     view: 'dashboard',
-    graphState: { range: null },
     WIFI_DEVICES: [{ key: 'monitor', label: 'Monitor' }, { key: 'display', label: 'Display' }],
     deviceWifi: {},
     sheetOpen: false,
@@ -189,8 +188,8 @@ function app() {
       } catch (e) { this.boschMessageError = true; this.boschMessage = e.name === 'AbortError' ? 'Request timed out. Check the status before retrying.' : e.message; }
       finally { this.boschBusy = false; }
     },
-    pagekiteStatus: { state: 'unknown' },
-    pagekiteStatusTimer: null,
+    cloudflareStatus: { state: 'unknown' },
+    cloudflareStatusTimer: null,
     events: [],
     history: { now_s: 0, samples: [], events: [] },
     historyLoaded: false,
@@ -228,17 +227,17 @@ function app() {
       return rgbCss(zoneColor(this.reading.thermocouple_zone, this.settings).bg);
     },
 
-    get pagekiteStatusTitle() {
-      if (this.pagekiteStatus.state === 'disabled') return this.draft.pagekite_enabled ? 'Waiting for save' : 'Off';
-      return ({ connected: 'Relay connected', connecting: 'Connecting', auth_error: 'Connection issue', network_error: 'Trying to reconnect', unavailable: 'Status unavailable' })[this.pagekiteStatus.state] || 'Checking connection…';
+    get cloudflareStatusTitle() {
+      if (this.cloudflareStatus.state === 'disabled') return this.draft.cloudflare_enabled ? 'Waiting for save' : 'Off';
+      return ({ connected: 'Cloudflare connected', connecting: 'Connecting', auth_error: 'Connection issue', network_error: 'Trying to reconnect', unavailable: 'Status unavailable' })[this.cloudflareStatus.state] || 'Checking connection…';
     },
 
-    get pagekiteStatusDetail() {
-      const status = this.pagekiteStatus;
-      if (status.state === 'disabled') return 'Save the PageKite settings to start the tunnel.';
-      if (status.state === 'connected') return 'The monitor is connected to PageKite. Public dashboard availability is not checked.';
+    get cloudflareStatusDetail() {
+      const status = this.cloudflareStatus;
+      if (status.state === 'disabled') return 'Save the Cloudflare settings to start the tunnel.';
+      if (status.state === 'connected') return `${status.connections || 0} of ${status.configured_connections || 1} connections active. Public dashboard availability is not checked.`;
       if (status.state === 'connecting') return 'The monitor is starting the remote access tunnel.';
-      if (status.state === 'auth_error') return `PageKite rejected the domain or shared secret. Check both settings; retrying${status.retry_in_s ? ` in ${status.retry_in_s} seconds` : ' automatically'}.`;
+      if (status.state === 'auth_error') return `Cloudflare rejected the connector token. Check the saved token; retrying${status.retry_in_s ? ` in ${status.retry_in_s} seconds` : ' automatically'}.`;
       if (status.state === 'network_error') return `The relay could not be reached. The monitor will retry${status.retry_in_s ? ` in ${status.retry_in_s} seconds` : ' automatically'}.`;
       if (status.state === 'unavailable') return 'The monitor has not reported tunnel status yet.';
       return 'Checking the tunnel status…';
@@ -274,22 +273,22 @@ function app() {
       }
     },
 
-    async fetchPagekiteStatus() {
+    async fetchCloudflareStatus() {
       // Local-only visual states for tools/mock_server.py previews. This lets
       // us inspect the UI against an already-running mock process without
       // changing or flashing firmware.
       const previewState = location.hostname === 'localhost'
-        ? new URLSearchParams(location.search).get('pagekite-preview-status') : null;
+        ? new URLSearchParams(location.search).get('cloudflare-preview-status') : null;
       if (previewState && ['connected', 'connecting', 'auth_error', 'network_error', 'unavailable'].includes(previewState)) {
-        this.pagekiteStatus = { state: previewState, retry_in_s: 16 };
+        this.cloudflareStatus = { state: previewState, retry_in_s: 16 };
         return;
       }
       try {
-        const res = await this.authorizedFetch('/api/pagekite/status', { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+        const res = await this.authorizedFetch('/api/cloudflare/status', { cache: 'no-store', signal: AbortSignal.timeout(3000) });
         if (!res.ok) throw new Error('unavailable');
-        this.pagekiteStatus = await res.json();
+        this.cloudflareStatus = await res.json();
       } catch (e) {
-        this.pagekiteStatus = { state: 'unavailable' };
+        this.cloudflareStatus = { state: 'unavailable' };
       }
     },
 
@@ -314,10 +313,10 @@ function app() {
     async fetchSettings() {
       try {
         const res = await this.authorizedFetch('/api/settings');
-        this.settings = { pagekite_secret: '', minimum_brightness: 20, maximum_brightness: 255, breathing_exponent: DEFAULT_BREATHING_EXPONENT, ...Object.fromEntries(ZONE_ORDER.map((zone) => [`zone_${zone}_color`, DEFAULT_ZONE_COLORS[zone]])), ...await res.json() };
-        if (location.hostname === 'localhost' && new URLSearchParams(location.search).has('pagekite-preview-status')) {
-          this.settings.pagekite_enabled = true;
-          this.settings.pagekite_domain ||= 'flumonitor-vanutsteen.pagekite.me';
+        this.settings = { cloudflare_token: '', cloudflare_connections: 1, minimum_brightness: 20, maximum_brightness: 255, breathing_exponent: DEFAULT_BREATHING_EXPONENT, ...Object.fromEntries(ZONE_ORDER.map((zone) => [`zone_${zone}_color`, DEFAULT_ZONE_COLORS[zone]])), ...await res.json() };
+        if (location.hostname === 'localhost' && new URLSearchParams(location.search).has('cloudflare-preview-status')) {
+          this.settings.cloudflare_enabled = true;
+          this.settings.cloudflare_hostname ||= 'cf-test.example.nl';
         }
         this.draft = { ...this.settings };
       } catch (e) { /* keeps whatever was loaded before, if anything */ }
@@ -449,17 +448,17 @@ function app() {
       this.boschDevice = this.bosch.device || '';
       this.boschZone = this.bosch.zone || 'zn1';
       this.fetchBosch();
-      this.fetchPagekiteStatus();
-      if (this.pagekiteStatusTimer === null) this.pagekiteStatusTimer = setInterval(() => {
-        if (this.view === 'settings') this.fetchPagekiteStatus();
+      this.fetchCloudflareStatus();
+      if (this.cloudflareStatusTimer === null) this.cloudflareStatusTimer = setInterval(() => {
+        if (this.view === 'settings') this.fetchCloudflareStatus();
       }, 5000);
     },
 
     closeSettings() {
       this.themeMenuOpen = false;
       this.view = 'dashboard';
-      clearInterval(this.pagekiteStatusTimer);
-      this.pagekiteStatusTimer = null;
+      clearInterval(this.cloudflareStatusTimer);
+      this.cloudflareStatusTimer = null;
     },
 
     get zoneTheme() {
@@ -523,13 +522,13 @@ function app() {
         saved = true;
         const result = await res.json();
         // Forget a submitted tunnel secret after success; retain any newer edit.
-        if ('pagekite_secret' in submitted) {
-          if (this.draft.pagekite_secret === submitted.pagekite_secret) this.draft.pagekite_secret = '';
-          submitted.pagekite_secret = '';
+        if ('cloudflare_token' in submitted) {
+          if (this.draft.cloudflare_token === submitted.cloudflare_token) this.draft.cloudflare_token = '';
+          submitted.cloudflare_token = '';
         }
-        if (typeof result.pagekite_secret_set === 'boolean') {
-          submitted.pagekite_secret_set = result.pagekite_secret_set;
-          this.draft.pagekite_secret_set = result.pagekite_secret_set;
+        if (typeof result.cloudflare_token_set === 'boolean') {
+          submitted.cloudflare_token_set = result.cloudflare_token_set;
+          this.draft.cloudflare_token_set = result.cloudflare_token_set;
         }
         submitted.settings_revision = result.settings_revision;
         this.draft.settings_revision = result.settings_revision;

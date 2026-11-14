@@ -1,17 +1,17 @@
-set(app_sources main.c sensors.c settings.c rest_api.c dashboard_auth.c ws_server.c sheets_logger.c status_led.c pagekite_tunnel.c memory_diagnostics.c bosch_client.c tls_memory.c stack_diagnostics.c)
+set(app_sources main.c sensors.c settings.c rest_api.c dashboard_auth.c ws_server.c sheets_logger.c status_led.c cloudflare_tunnel.c memory_diagnostics.c bosch_client.c tls_memory.c stack_diagnostics.c)
 idf_component_register(SRCS ${app_sources}
                        INCLUDE_DIRS "."
                        PRIV_REQUIRES esp_event esp_netif esp_wifi nvs_flash wifi_setup captive_portal ota_server
                                      esp_http_server esp_http_client app_update mdns i2cdev mcp960x
-                                     driver esp_pm esp_rom esp_timer esp-tls mbedtls led_strip
-                       EMBED_FILES web_ui/fonts/caprasimo-400.woff2 web_ui/fonts/figtree-400.woff2
-                                   web_ui/fonts/figtree-600.woff2 web_ui/fonts/figtree-700.woff2)
+                                     driver esp_pm esp_rom esp_timer esp-tls mbedtls esp_cf_tunnel led_strip espcoredump flight_recorder
+                       EMBED_FILES web_ui/fonts/caprasimo-400.woff2 web_ui/fonts/figtree-variable.woff2)
 
 # Rebuild compressed payloads and cache tags whenever any served asset changes.
 set(WEB_ASSET_HEADER "${CMAKE_CURRENT_BINARY_DIR}/web_assets_generated.h")
 add_custom_command(OUTPUT "${WEB_ASSET_HEADER}"
                    COMMAND "${PYTHON}" "${CMAKE_CURRENT_LIST_DIR}/../tools/generate_web_assets.py" "${WEB_ASSET_HEADER}"
                    DEPENDS "${CMAKE_CURRENT_LIST_DIR}/../tools/generate_web_assets.py"
+                           "${CMAKE_CURRENT_LIST_DIR}/rest_api.c"
                            web_ui/flue-icon-stove.svg
                            web_ui/favicon.ico
                            web_ui/apple-touch-icon.png
@@ -37,8 +37,7 @@ add_custom_command(OUTPUT "${WEB_ASSET_HEADER}"
                            web_ui/burn-graph.js web_ui/vendor/uplot.min.js web_ui/vendor/uplot.min.css
                            "${CMAKE_CURRENT_LIST_DIR}/../../components/captive_portal/alpine.min.js"
                            "${CMAKE_CURRENT_LIST_DIR}/../../components/captive_portal/styles.css"
-                           web_ui/fonts/caprasimo-400.woff2 web_ui/fonts/figtree-400.woff2
-                           web_ui/fonts/figtree-600.woff2 web_ui/fonts/figtree-700.woff2
+                           web_ui/fonts/caprasimo-400.woff2 web_ui/fonts/figtree-variable.woff2
                    VERBATIM)
 add_custom_target(web_asset_header DEPENDS "${WEB_ASSET_HEADER}")
 add_dependencies(${COMPONENT_LIB} web_asset_header)

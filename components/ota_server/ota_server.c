@@ -1,6 +1,9 @@
 #include "ota_server.h"
 
 #include <string.h>
+#include <stdlib.h>
+#include "buffer_memory.h"
+#include "flight_recorder.h"
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -33,6 +36,53 @@ static bool secret_ok(httpd_req_t *req) {
   return strcmp(secret, s_secret) == 0;
 }
 
+static esp_err_t (*s_restore_history)(const char *, size_t);
+static esp_err_t (*s_export_history)(void *, size_t *);
+
+void ota_server_set_history_hooks(esp_err_t (*restore)(const char *, size_t),
+                                  esp_err_t (*export_history)(void *, size_t *)) {
+  s_restore_history = restore;
+  s_export_history = export_history;
+}
+
+static esp_err_t history_export_handler(httpd_req_t *req) {
+  if (!secret_ok(req)) return httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Bad or missing secret");
+  size_t size = 0;
+  if (!s_export_history || s_export_history(NULL, &size) != ESP_OK || !size || size > 32768)
+    return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "History export unavailable");
+  void *body = buffer_memory_alloc(size);
+  if (!body) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
+  esp_err_t err = s_export_history(body, &size);
+  if (err == ESP_OK) {
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    err = httpd_resp_send(req, body, size);
+  } else httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "History export failed");
+  free(body);
+  return err;
+}
+
+static esp_err_t history_restore_handler(httpd_req_t *req) {
+  if (!secret_ok(req)) return httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Bad or missing secret");
+  if (!s_restore_history) return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "History restore unavailable");
+  if (req->content_len <= 0 || req->content_len > 32768)
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid history size");
+  char *body = buffer_memory_alloc(req->content_len + 1);
+  if (!body) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
+  size_t received = 0;
+  while (received < (size_t)req->content_len) {
+    int n = httpd_req_recv(req, body + received, req->content_len - received);
+    if (n <= 0) { free(body); return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete history"); }
+    received += n;
+  }
+  body[received] = 0;
+  esp_err_t err = s_restore_history(body, received);
+  free(body);
+  if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "History restore failed");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(req, "OK, history restored\n");
+}
+
 static esp_err_t ota_post_handler(httpd_req_t *req) {
   if (!secret_ok(req)) {
     httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Bad or missing secret");
@@ -49,18 +99,27 @@ static esp_err_t ota_post_handler(httpd_req_t *req) {
   ESP_LOGI(TAG, "Starting OTA: running='%s' -> target='%s', %d bytes incoming", running->label,
             update_partition->label, (int) req->content_len);
 
+  // esp_flash_write stages non-DRAM input in internal memory before disabling
+  // the cache (ESP-IDF 6.0.3). The task stack itself must remain internal.
+  const size_t buffer_size = 1024;
+  char *buf = buffer_memory_alloc(buffer_size);
+  if (!buf) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
+    return ESP_FAIL;
+  }
   esp_ota_handle_t ota_handle;
+  FLUE_TRACE(OTA_BEGIN,req->content_len);
   esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
   if (err != ESP_OK) {
+    free(buf);
     ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_begin failed");
     return ESP_FAIL;
   }
 
-  char buf[1024];
   size_t remaining = req->content_len;
   while (remaining > 0) {
-    size_t chunk = remaining < sizeof(buf) ? remaining : sizeof(buf);
+    size_t chunk = remaining < buffer_size ? remaining : buffer_size;
     int recv_len = httpd_req_recv(req, buf, chunk);
     if (recv_len <= 0) {
       if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {
@@ -68,6 +127,7 @@ static esp_err_t ota_post_handler(httpd_req_t *req) {
       }
       ESP_LOGE(TAG, "httpd_req_recv failed: %d", recv_len);
       esp_ota_abort(ota_handle);
+      free(buf);
       httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read request body");
       return ESP_FAIL;
     }
@@ -76,13 +136,16 @@ static esp_err_t ota_post_handler(httpd_req_t *req) {
     if (err != ESP_OK) {
       ESP_LOGE(TAG, "esp_ota_write failed: %s", esp_err_to_name(err));
       esp_ota_abort(ota_handle);
+      free(buf);
       httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "esp_ota_write failed");
       return ESP_FAIL;
     }
     remaining -= (size_t) recv_len;
   }
+  free(buf);
 
   err = esp_ota_end(ota_handle);
+  FLUE_TRACE(OTA_END,err);
   if (err != ESP_OK) {
     // Most commonly ESP_ERR_OTA_VALIDATE_FAILED -- the received image
     // failed its own header/checksum validation. Whatever's currently
@@ -119,6 +182,14 @@ static const httpd_uri_t ota_uri = {
 void ota_server_register(httpd_handle_t server, const char *secret) {
   s_secret = secret;
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_uri));
+  if (s_export_history) {
+    const httpd_uri_t history_uri = {.uri="/ota/history", .method=HTTP_GET, .handler=history_export_handler};
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &history_uri));
+  }
+  if (s_restore_history) {
+    const httpd_uri_t history_uri = {.uri="/ota/history", .method=HTTP_POST, .handler=history_restore_handler};
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &history_uri));
+  }
 }
 
 void ota_server_start(const char *secret) {

@@ -1,24 +1,13 @@
 dependencies:
   esp-idf-lib/esp_idf_lib_helpers:
-    component_hash: 689853bb8993434f9556af0f2816e808bf77b5d22100144b21f3519993daf237
+    component_hash: 2b46288d7500846fe9f5ca7bfa2597067de9e38d94fb0d6ff834639ab02734ba
     dependencies: []
     source:
       registry_url: https://components.espressif.com
       type: service
-    targets:
-    - esp32
-    - esp32c2
-    - esp32c3
-    - esp32c5
-    - esp32c6
-    - esp32c61
-    - esp32h2
-    - esp32p4
-    - esp32s2
-    - esp32s3
-    version: 1.4.0
+    version: 1.4.2
   esp-idf-lib/i2cdev:
-    component_hash: ad8981cc64533dcaced5107d72e42bcebe79345e194e82795792af531b300ce3
+    component_hash: 7d6f93a3037a11d96aa47021789f63de7abc8443f6874ff06e9e54aecd379aa3
     dependencies:
     - name: esp-idf-lib/esp_idf_lib_helpers
       registry_url: https://components.espressif.com
@@ -27,18 +16,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    targets:
-    - esp32
-    - esp32c2
-    - esp32c3
-    - esp32c5
-    - esp32c6
-    - esp32c61
-    - esp32h2
-    - esp32p4
-    - esp32s2
-    - esp32s3
-    version: 2.1.2
+    version: 2.2.0
   esp-idf-lib/mcp960x:
     component_hash: 3a2841414d05e643bc91d154c4c7469221f8704c0650084be4da4449414d1f15
     dependencies:
@@ -95,6 +73,16 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.13.1
+  espressif/nghttp:
+    component_hash: e0429dc6ecf6fdfab077a52c3eb5846c1c4a4a6d969633e8d1227b438b78530a
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.69.0
   idf:
     source:
       type: idf
@@ -105,7 +93,8 @@ direct_dependencies:
 - espressif/cjson
 - espressif/led_strip
 - espressif/mdns
+- espressif/nghttp
 - idf
-manifest_hash: e76dfbe5751958b8eda1875956cefcca4c9499014cedeb86bef53d856b9e8af2
+manifest_hash: 24d40c6189a8abece072de2163a614e97259b2983aae30c53b12b3ba5c8f6292
 target: esp32
 version: 3.0.0

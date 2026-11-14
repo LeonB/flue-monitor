@@ -1,0 +1,5 @@
+https://github.com/igrr/esp-cf-tunnel
+eb932667c456a4435de7e8dab8ef2c4e4192478b
+Local changes: scoped strict PSRAM allocation (including strdup) and nghttp2 session memory callbacks with overflow guards. Optional per-poll task callback lets the owner defer unregistering until after a settings response. Protocol framing unchanged. The monitor owns its worker in main/cloudflare_tunnel.c.
+
+Local dashboard burst fix: origin-slot availability query; late proxy start retains the stream end-of-body state. App queues at most 16 GETs for 10 seconds while keeping four origin sockets; this is separate from the PSRAM upstream PR.

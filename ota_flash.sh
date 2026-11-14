@@ -19,6 +19,11 @@ HOST="$2"
 # which for both flue-monitor/ and flue-display/ matches their directory name.
 PROJECT_NAME="$(basename "$(cd "$PROJECT_DIR" && pwd)")"
 
+# The monitor preserves its graph externally as well as in device flash.
+if [ -f "$PROJECT_DIR/tools/ota_with_history.py" ]; then
+  exec python3 "$PROJECT_DIR/tools/ota_with_history.py" "$PROJECT_DIR" "$HOST"
+fi
+
 SECRET_FILE="$PROJECT_DIR/main/secrets.h"
 if [ ! -f "$SECRET_FILE" ]; then
   echo "Error: $SECRET_FILE not found -- copy main/secrets.h.example to main/secrets.h and fill in a real secret." >&2

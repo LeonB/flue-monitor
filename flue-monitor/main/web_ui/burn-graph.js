@@ -1,7 +1,34 @@
+// Select a recent burn, merging cold interruptions shorter than 30 minutes.
+function burnHistoryRange(samples, cold, now) {
+  const recent = 3 * 3600, pause = 30 * 60, padding = 15 * 60;
+  let latest = null, current = null, coldSince = null;
+  for (const [time, temperature] of samples) {
+    if (current && coldSince !== null && time - coldSince >= pause) {
+      latest = { start: current.start, end: coldSince };
+      current = null;
+    }
+    if (temperature >= cold) {
+      if (!current) current = { start: time };
+      coldSince = null;
+    } else if (current && coldSince === null) {
+      coldSince = time;
+    }
+  }
+  if (current) {
+    const last = samples[samples.length - 1][0];
+    latest = { start: current.start, end: coldSince ?? last };
+    if (now - (coldSince ?? last) < pause) latest.end = now;
+  }
+  if (!latest || now - latest.end > recent) return { min: now - recent, max: now };
+  const min = Math.max(samples[0][0], latest.start - padding);
+  const max = Math.min(now, latest.end + padding);
+  return { min: Math.min(min, max - 600), max };
+}
+
 // uPlot 1.6.32; keep the chart outside Alpine's reactive proxy.
-function burnGraph(state = { range: null }) {
+function burnGraph() {
   let plot, observer, anchor, samples = [], events = [], palette, bounds;
-  let chartHost, tooltip, lastHistory;
+  let chartHost, tooltip, lastHistory, defaultRange, manualRange = false;
   const rangeClock = (s) => new Date(s * 1000).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
   const clock = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return {
@@ -34,8 +61,14 @@ function burnGraph(state = { range: null }) {
       const values = samples.map(s => s[1]);
       const low = Math.min(...values, cold), high = Math.max(...values, hot);
       bounds = { low: low - Math.max(10, (high-low)*.1), high: high + Math.max(30, (high-low)*.15), cold, hot };
+      defaultRange = burnHistoryRange(samples, cold, Date.now() / 1000);
       const data = [samples.map(s => s[0]), values];
-      if (plot) { plot.setData(data, false); plot.redraw(); return; }
+      if (plot) {
+        plot.setData(data, false);
+        if (!manualRange) this.resetRange();
+        plot.redraw();
+        return;
+      }
       this.$nextTick(() => {
         if (plot || !chartHost.isConnected || !chartHost.clientWidth) return;
         const css = getComputedStyle(chartHost);
@@ -131,15 +164,12 @@ function burnGraph(state = { range: null }) {
             setScale: [(u, key) => {
               if (key !== 'x') return;
               if (!u.scales.x.min || !u.scales.x.max) return;
-              // Constructor hooks run before plot is assigned: preserve the saved range.
-              if (plot) state.range = u.scales.x.max - u.scales.x.min >= 86400 - .01
-                ? null : { min: u.scales.x.min, max: u.scales.x.max };
+              if (plot) manualRange = true;
               this.visibleRange = `${rangeClock(u.scales.x.min)} – ${rangeClock(u.scales.x.max)}`;
             }]
           }
         }, data, chartHost);
-        if (state.range) plot.setScale('x', { ...state.range });
-        else this.resetRange();
+        this.resetRange();
         plot.over.addEventListener('dblclick', () => this.resetRange());
         const zoom = (factor, centre) => {
           const lo=plot.scales.x.min, hi=plot.scales.x.max;
@@ -190,8 +220,8 @@ function burnGraph(state = { range: null }) {
     },
     resetRange() {
       if (!plot) return;
-      const max=samples[samples.length-1][0];
-      plot.setScale('x',{min:max-86400,max});
+      plot.setScale('x', { ...defaultRange });
+      manualRange = false;
     }
   };
 }

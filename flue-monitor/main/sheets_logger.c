@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -18,6 +19,8 @@
 #include "bosch_client.h"
 #include "memory_diagnostics.h"
 #include "stack_diagnostics.h"
+#include "buffer_memory.h"
+#include "flight_recorder.h"
 
 static const char *TAG = "sheets_logger";
 
@@ -28,6 +31,12 @@ static const char *TAG = "sheets_logger";
 
 #define EVENT_LABEL_MAX_LEN  32
 #define URL_BUF_SIZE         576
+
+// Only the Sheets worker uses this boot-lifetime PSRAM workspace.
+static struct {
+  settings_t settings;
+  char url[URL_BUF_SIZE];
+} *s_buffers;
 
 // A wall clock that hasn't synced via SNTP yet (main.c's start_sntp()) reads
 // an epoch near 0, since this chip has no battery-backed RTC to carry real
@@ -114,6 +123,7 @@ typedef struct {
 } queued_event_t;
 
 static QueueHandle_t s_event_queue;
+static bool s_ready;
 
 // Fires the actual GET request. Always runs on this module's own task --
 // Apps Script Web App latency has been observed ranging from ~1.5s to 40+s
@@ -149,14 +159,14 @@ static bool log_to_sheets(const sensor_reading_t *reading, const settings_t *set
   // Empty query values become blank cells, never a fabricated 0°C reading.
   char room[16] = "";
   if (isfinite(room_temperature_c)) snprintf(room,sizeof room,"%.1f",room_temperature_c);
-  char url[URL_BUF_SIZE];
-  int len = snprintf(url, sizeof(url),
+  char *url = s_buffers->url;
+  int len = snprintf(url, sizeof s_buffers->url,
                      "%s?secret=%s&thermocouple=%.1f&cold_junction=%.1f&rate=%.2f&zone=%s&event=%s&age_ms=%lld&event_ts=%lld&room_temperature=%s",
                      settings->google_sheets_webhook_url, settings->google_sheets_secret, reading->thermocouple_c,
                      reading->cold_junction_c, reading->thermocouple_rate_c_per_min,
                      thermocouple_zone_name(reading->thermocouple_zone), event, (long long) age_ms,
                      (long long) event_epoch_s, room);
-  if (len < 0 || (size_t) len >= sizeof(url)) {
+  if (len < 0 || (size_t) len >= sizeof s_buffers->url) {
     ESP_LOGW(TAG, "Webhook URL too long for the buffer -- skipping log (check google_sheets_webhook_url)");
     return false;
   }
@@ -188,7 +198,12 @@ static bool log_to_sheets(const sensor_reading_t *reading, const settings_t *set
       .crt_bundle_attach = esp_crt_bundle_attach,
   };
   esp_http_client_handle_t client = esp_http_client_init(&config);
+  if (!client) {
+    ESP_LOGW(TAG, "Unable to allocate Google Sheets HTTP client");
+    return false;
+  }
   memory_diagnostics_sheets_begin();
+  FLUE_TRACE(SHEETS_BEGIN,0);
   esp_err_t err = esp_http_client_perform(client);
   // ESP_OK only means the HTTP exchange completed -- Code.gs answers with a
   // plain HTTP 200 even when it rejects the request (a wrong secret returns
@@ -213,6 +228,7 @@ static bool log_to_sheets(const sensor_reading_t *reading, const settings_t *set
   } else {
     ESP_LOGI(TAG, "Logged to Google Sheets (event=%s, status=%d)", event, esp_http_client_get_status_code(client));
   }
+  FLUE_TRACE(SHEETS_END,err==ESP_OK ? (ok ? 200 : 0) : err);
   memory_diagnostics_sheets_end(ok);
   esp_http_client_cleanup(client);
   return ok;
@@ -223,6 +239,7 @@ bool sheets_logger_log_event(const char *event) {
   (void)event;
   return false;
 #endif
+  if (!s_ready) return false;
   queued_event_t item = {0};
   strlcpy(item.label, event, sizeof(item.label));
   // Captured now, synchronously, at the moment of the actual tap -- not
@@ -254,10 +271,10 @@ static void sheets_logger_task(void *arg) {
       // behavior: a deliberate annotation, not a routine sample, so it
       // doesn't delay or restart the next scheduled heartbeat/deadband
       // check either.
-      settings_t settings;
-      settings_get(&settings);
+      settings_t *settings = &s_buffers->settings;
+      settings_get(settings);
       int64_t age_ms = (esp_timer_get_time() - item.enqueued_us) / 1000;
-      log_to_sheets(&item.reading, &settings, item.label, age_ms, item.enqueued_epoch_s, item.room_temperature_c);
+      log_to_sheets(&item.reading, settings, item.label, age_ms, item.enqueued_epoch_s, item.room_temperature_c);
       continue;
     }
 
@@ -281,13 +298,13 @@ static void sheets_logger_task(void *arg) {
       continue;
     }
 
-    settings_t settings;
-    settings_get(&settings);
+    settings_t *settings = &s_buffers->settings;
+    settings_get(settings);
 
     int64_t now_us = esp_timer_get_time();
     float delta = fabsf(reading.thermocouple_c - s_last_logged_thermocouple_c);
-    bool delta_due = delta >= settings.thermocouple_deadband_c;
-    bool heartbeat_due = (now_us - s_last_log_us) >= (int64_t) settings.log_heartbeat_min * 60 * 1000000;
+    bool delta_due = delta >= settings->thermocouple_deadband_c;
+    bool heartbeat_due = (now_us - s_last_log_us) >= (int64_t) settings->log_heartbeat_min * 60 * 1000000;
     if (!delta_due && !heartbeat_due) {
       continue;
     }
@@ -295,7 +312,7 @@ static void sheets_logger_task(void *arg) {
     double room_temperature_c = NAN;
     bosch_client_get_temperature(&room_temperature_c);
     time_t event_epoch_s = wall_clock_synced() ? time(NULL) : 0;
-    if (log_to_sheets(&reading, &settings, delta_due ? "temp_change" : "heartbeat", 0, event_epoch_s, room_temperature_c)) {
+    if (log_to_sheets(&reading, settings, delta_due ? "temp_change" : "heartbeat", 0, event_epoch_s, room_temperature_c)) {
       s_last_logged_thermocouple_c = reading.thermocouple_c;
       s_last_log_us = now_us;
     }
@@ -311,9 +328,22 @@ void sheets_logger_init(void) {
   ESP_LOGW(TAG, "Diagnostic build: uploads disabled; saved settings retained");
   return;
 #endif
+  if (s_event_queue) return;
+  s_buffers = buffer_memory_calloc(1, sizeof *s_buffers);
+  if (!s_buffers) return;
   s_event_queue = xQueueCreate(4, sizeof(queued_event_t));
-  // HTTPS/TLS uses substantial stack while the logger's local request buffers
-  // and settings snapshot are live. The previous 6 KiB stack overflowed during
-  // the first periodic webhook request on-device.
-  xTaskCreate(sheets_logger_task, "sheets_logger", SHEETS_STACK_BYTES, NULL, tskIDLE_PRIORITY + 1, NULL);
+  if (!s_event_queue) {
+    free(s_buffers); s_buffers = NULL;
+    ESP_LOGE(TAG, "Unable to allocate Sheets event queue");
+    return;
+  }
+  // Keep the measured stack reservation: TLS still needs stack even though
+  // application request buffers and settings snapshots now live in PSRAM.
+  if (xTaskCreate(sheets_logger_task, "sheets_logger", SHEETS_STACK_BYTES, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+    vQueueDelete(s_event_queue); s_event_queue = NULL;
+    free(s_buffers); s_buffers = NULL;
+    ESP_LOGE(TAG, "Unable to allocate Sheets task");
+  } else {
+    s_ready = true;
+  }
 }

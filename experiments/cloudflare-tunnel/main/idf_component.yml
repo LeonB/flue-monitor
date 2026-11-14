@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=6.0"
+  esp_cf_tunnel:
+    git: https://github.com/igrr/esp-cf-tunnel.git
+    version: eb932667c456a4435de7e8dab8ef2c4e4192478b

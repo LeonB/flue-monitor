@@ -16,7 +16,9 @@ for name in ("html", "manifest"):
             assert target in web.versioned_urls.values(), target
 html = web.payloads["html"].decode()
 assert "/service-worker.js?v=" not in html
-assert html.count('as="font"') == 4
+assert html.count('as="font"') == 2
+assert 'font-weight: 400 700' in html
+assert '/fonts/figtree-variable.woff2?v=' in html
 assert "&v=" in html  # launch images retain their size query
 # A font update invalidates consumers, but leaves unrelated scripts unchanged.
 with tempfile.TemporaryDirectory() as directory:

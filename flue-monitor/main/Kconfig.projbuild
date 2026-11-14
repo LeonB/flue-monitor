@@ -1,7 +1,13 @@
 menu "Temporary feature isolation diagnostics"
 
-config FLUE_DIAG_DISABLE_PAGEKITE
-    bool "Do not start PageKite (preserve saved configuration)"
+config FLUE_DIAG_RECORDER
+    bool "Record recent events in internal RAM and a small RTC tail"
+    depends on ESP_COREDUMP_ENABLE
+    default n
+
+config FLUE_DIAG_CRASH_TEST
+    bool "Allow a controlled crash through the physical UART console"
+    depends on FLUE_DIAG_RECORDER
     default n
 
 config FLUE_DIAG_DISABLE_SHEETS

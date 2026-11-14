@@ -6,7 +6,7 @@
 #include "esp_system.h"
 #include "esp_pm.h"
 #include "freertos/FreeRTOS.h"
-#include "pagekite_tunnel.h"
+#include "cloudflare_tunnel.h"
 
 #define CAPS (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
 static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
@@ -53,8 +53,8 @@ void memory_diagnostics_add_json(cJSON *root) {
     portENTER_CRITICAL(&mux);
     typeof(stats) snapshot = stats;
     portEXIT_CRITICAL(&mux);
-    pagekite_status_t tunnel;
-    pagekite_tunnel_get_status(&tunnel);
+    cloudflare_status_t tunnel;
+    cloudflare_tunnel_get_status(&tunnel);
     cJSON *memory = cJSON_AddObjectToObject(root, "memory");
     if (!memory) return;
     stack_diagnostics_add_json(memory);
@@ -93,5 +93,6 @@ void memory_diagnostics_add_json(cJSON *root) {
     cJSON_AddNumberToObject(memory, "sheets_attempts", snapshot.sheets_attempts);
     cJSON_AddNumberToObject(memory, "sheets_completed", snapshot.sheets_completed);
     cJSON_AddNumberToObject(memory, "sheets_successes", snapshot.sheets_successes);
-    cJSON_AddBoolToObject(memory, "pagekite_connected", tunnel.state == PAGEKITE_STATUS_CONNECTED);
+    cJSON_AddBoolToObject(memory, "cloudflare_connected", tunnel.state == CLOUDFLARE_STATUS_CONNECTED);
+    cJSON_AddNumberToObject(memory, "cloudflare_connections", tunnel.connections);
 }

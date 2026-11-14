@@ -1,8 +1,11 @@
 #include "settings.h"
+#include "flight_recorder.h"
 
 #include <string.h>
 #include <stddef.h>
 #include <math.h>
+#include <stdlib.h>
+#include "buffer_memory.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -14,9 +17,10 @@
 static const char *TAG = "settings";
 
 #define NVS_NAMESPACE "settings"
-#define NVS_KEY_BLOB  "settings_v1"  // whole settings_t as one blob -- see settings_set()'s own doc comment for why
+#define NVS_KEY_LEGACY "settings_v1"
+#define NVS_KEY_BLOB  "settings_v2"  // whole settings_t as one blob -- see settings_set()'s own doc comment for why
 
-static settings_t s_settings;
+static settings_t *s_settings;
 static SemaphoreHandle_t s_mutex;
 
 static void set_defaults(settings_t *s) {
@@ -39,6 +43,7 @@ static void set_defaults(settings_t *s) {
   s->breathing_exponent = DEFAULT_BREATHING_EXPONENT;
   s->minimum_brightness = DEFAULT_MINIMUM_BRIGHTNESS;
   s->maximum_brightness = DEFAULT_MAXIMUM_BRIGHTNESS;
+  s->cloudflare.connections = 1;
 }
 
 static bool valid_color(const char color[8]) {
@@ -67,18 +72,21 @@ static bool valid_host(const char *host) {
   }
   return label && host[n - 1] != '-';
 }
-static bool valid_pagekite(const pagekite_settings_t *p) {
-  if (p->enabled > 1) return false;
-  if (*p->domain && !valid_host(p->domain)) return false;
-  if (*p->custom_domain && (!valid_host(p->custom_domain) || !strcmp(p->domain, p->custom_domain))) return false;
-  size_t n = strnlen(p->secret, sizeof p->secret);
-  if (n >= sizeof p->secret) return false;
-  for (size_t i = 0; i < n; i++) if ((unsigned char)p->secret[i] < 33 || (unsigned char)p->secret[i] > 126) return false;
-  return !p->enabled || (*p->domain && n >= 8);
+static bool valid_cloudflare(const cloudflare_settings_t *c) {
+  if (c->enabled > 1 || c->connections < 1 || c->connections > 4) return false;
+  if (*c->hostname && !valid_host(c->hostname)) return false;
+  size_t n = strnlen(c->token, sizeof c->token);
+  if (n >= sizeof c->token) return false;
+  for (size_t i = 0; i < n; i++) {
+    unsigned char ch = c->token[i];
+    if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+          (ch >= '0' && ch <= '9') || ch == '+' || ch == '/' || ch == '=' || ch == '-' || ch == '_')) return false;
+  }
+  return !c->enabled || (*c->hostname && n >= 16);
 }
 
 static bool validate(const settings_t *s) {
-  if (!valid_pagekite(&s->pagekite)) return false;
+  if (!valid_cloudflare(&s->cloudflare)) return false;
   if (s->maximum_brightness > 255 || s->minimum_brightness > s->maximum_brightness) return false;
   if (!isfinite(s->breathing_exponent) || s->breathing_exponent < 0.3f || s->breathing_exponent > 3.0f) return false;
   if (!valid_color(s->zone_cold_color) || !valid_color(s->zone_optimal_color) || !valid_color(s->zone_hot_color)) return false;
@@ -109,54 +117,57 @@ static bool validate(const settings_t *s) {
 void settings_init(void) {
   s_mutex = xSemaphoreCreateMutex();
 
-  settings_t loaded;
-  set_defaults(&loaded);
-
+  // Large settings/token snapshots belong in PSRAM, not on the main stack.
+  settings_t *loaded = buffer_memory_calloc(1, sizeof *loaded);
+  if (!loaded) abort();
+  set_defaults(loaded);
   nvs_handle_t handle;
   if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
-    // The reverted panel-calibration firmware appended four or five 32-bit
-    // fields. Read its known tail too, then retain the unchanged prefix.
-    // Merely reducing the read buffer makes nvs_get_blob reject the whole
-    // blob and silently disables saved Sheets/PageKite configuration.
-    struct {
-      settings_t prefix;
-      uint32_t removed_panel_fields[5];
-    } stored = {.prefix = loaded};
-    size_t len = sizeof(stored);
-    // Earlier layouts are unchanged prefixes (before colours, shape, or
-    // minimum brightness). Seed missing tail fields while retaining old values.
-    if (nvs_get_blob(handle, NVS_KEY_BLOB, &stored, &len) == ESP_OK &&
-        (len == sizeof(settings_t) ||
-         len == sizeof(settings_t) + 4 * sizeof(uint32_t) ||
-         len == sizeof(stored) ||
+    size_t len = 0;
+    const size_t legacy_size = offsetof(settings_t, cloudflare);
+    // Leave the old blob untouched so an app rollback still has its settings.
+    const char *key = NVS_KEY_BLOB;
+    if (nvs_get_blob(handle, key, NULL, &len) != ESP_OK) key = NVS_KEY_LEGACY;
+    if (nvs_get_blob(handle, key, NULL, &len) == ESP_OK &&
+        (len == sizeof(settings_t) || len == legacy_size ||
+         len == legacy_size + 16 || len == legacy_size + 20 ||
          len == offsetof(settings_t, pagekite) + offsetof(pagekite_settings_t, custom_domain) ||
          len == offsetof(settings_t, zone_cold_color) ||
          len == offsetof(settings_t, breathing_exponent) ||
          len == offsetof(settings_t, maximum_brightness) ||
-         len == offsetof(settings_t, pagekite)) &&
-        validate(&stored.prefix)) {
-      loaded = stored.prefix;
-      ESP_LOGI(TAG, "Loaded settings from NVS");
-    } else {
-      ESP_LOGI(TAG, "No usable settings in NVS yet -- using compile-time defaults");
+         len == offsetof(settings_t, pagekite))) {
+      void *stored = buffer_memory_calloc(1, len);
+      if (!stored) abort();
+      size_t read_len = len;
+      if (nvs_get_blob(handle, key, stored, &read_len) == ESP_OK && read_len == len) {
+        memcpy(loaded, stored, len == sizeof(settings_t) ? len : (len < legacy_size ? len : legacy_size));
+        if (!validate(loaded)) set_defaults(loaded);
+      }
+      memset(stored, 0, len);
+      free(stored);
     }
     nvs_close(handle);
-  } else {
-    ESP_LOGI(TAG, "Settings NVS namespace not found yet -- using compile-time defaults");
   }
-
+  if (s_settings) { memset(s_settings, 0, sizeof *s_settings); free(s_settings); }
   s_settings = loaded;
 }
 
 void settings_get(settings_t *out) {
   xSemaphoreTake(s_mutex, portMAX_DELAY);
-  *out = s_settings;
+  *out = *s_settings;
   xSemaphoreGive(s_mutex);
 }
 
-void settings_get_pagekite(pagekite_settings_t *out) {
+void settings_get_cloudflare(cloudflare_settings_t *out) {
   xSemaphoreTake(s_mutex, portMAX_DELAY);
-  *out = s_settings.pagekite;
+  *out = s_settings->cloudflare;
+  xSemaphoreGive(s_mutex);
+}
+
+void settings_get_zone_limits(float *cold_max_c, float *optimal_max_c) {
+  xSemaphoreTake(s_mutex, portMAX_DELAY);
+  *cold_max_c = s_settings->zone_cold_max_c;
+  *optimal_max_c = s_settings->zone_optimal_max_c;
   xSemaphoreGive(s_mutex);
 }
 
@@ -170,17 +181,19 @@ esp_err_t settings_set(const settings_t *new_settings) {
   if (err != ESP_OK) {
     return err;
   }
+  FLUE_TRACE(NVS_BEGIN,sizeof *new_settings);
   err = nvs_set_blob(handle, NVS_KEY_BLOB, new_settings, sizeof(*new_settings));
   if (err == ESP_OK) {
     err = nvs_commit(handle);
   }
   nvs_close(handle);
+  FLUE_TRACE(NVS_END,err);
   if (err != ESP_OK) {
     return err;
   }
 
   xSemaphoreTake(s_mutex, portMAX_DELAY);
-  s_settings = *new_settings;
+  *s_settings = *new_settings;
   xSemaphoreGive(s_mutex);
   return ESP_OK;
 }

@@ -1,0 +1,33 @@
+dependencies:
+  esp_cf_tunnel:
+    component_hash: 05cad747e15aff22cd5d8340f9083cd8e2349729af498ad6185f6acd165e834d
+    dependencies:
+    - name: idf
+      version: '>=5.4'
+    - name: espressif/nghttp
+      version: ^1.65.0
+    source:
+      git: https://github.com/igrr/esp-cf-tunnel.git
+      path: .
+      type: git
+    version: eb932667c456a4435de7e8dab8ef2c4e4192478b
+  espressif/nghttp:
+    component_hash: e0429dc6ecf6fdfab077a52c3eb5846c1c4a4a6d969633e8d1227b438b78530a
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.69.0
+  idf:
+    source:
+      type: idf
+    version: 6.2.0
+direct_dependencies:
+- esp_cf_tunnel
+- idf
+manifest_hash: 80b77963e1c3a47a2011b642d675996a037d5f6134132064f4fcaba693c5001c
+target: esp32s3
+version: 3.0.0

@@ -38,7 +38,7 @@ void stack_diagnostics_sample(void) {
 }
 
 void stack_diagnostics_add_json(cJSON *memory) {
-    static const char *const names[] = {"main", "sensor", "sheets", "bosch", "pagekite", "http"};
+    static const char *const names[] = {"main", "sensor", "sheets", "bosch", "cloudflare", "http"};
     struct stack_entry snapshot[STACK_TASK_COUNT];
     portENTER_CRITICAL(&mux);
     for (unsigned i = 0; i < STACK_TASK_COUNT; i++) snapshot[i] = entries[i];

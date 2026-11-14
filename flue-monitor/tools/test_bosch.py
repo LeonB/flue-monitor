@@ -61,8 +61,9 @@ typedef int esp_err_t; typedef int nvs_handle_t;
 static int64_t clock_s=100;
 static int64_t esp_timer_get_time(void){return clock_s*1000000;}
 static void xSemaphoreTake(int a,int b){} static void xSemaphoreGive(int a){}
-static void *buffer_memory_alloc(size_t n){return malloc(n);}
-static void *buffer_memory_calloc(size_t n,size_t s){return calloc(n,s);}
+static bool fail_buffer_alloc;
+static void *buffer_memory_alloc(size_t n){return fail_buffer_alloc ? NULL : malloc(n);}
+static void *buffer_memory_calloc(size_t n,size_t s){return fail_buffer_alloc ? NULL : calloc(n,s);}
 static void esp_fill_random(void *p,size_t n){memset(p,42,n);}
 static int mock_http_status=200, request_count;
 static const char *mock_response;
@@ -134,6 +135,19 @@ int main(void) {
  mock_http_status=503;assert(!refresh() && !reauth);
  mock_http_status=400;assert(!refresh() && reauth);
  puts("PASS token rotation and restart restoration, refreshed-token reading, invalid values, 401 and transient/permanent failures");
+
+ strcpy(oauth_state,"expected");auth_deadline=clock_s+1200;
+ int requests_before=request_count;
+ fail_buffer_alloc=true;
+ cmd("{\"action\":\"callback\",\"callback\":\"com.bosch.tt.dashtt.pointt://app/login?code=test-code&state=expected\"}");
+ assert(request_count==requests_before && !strcmp(status.state,"error"));
+ fail_buffer_alloc=false;mock_response=NULL;
+ cmd("{\"action\":\"callback\",\"callback\":\"com.bosch.tt.dashtt.pointt://app/login?code=test-code&state=expected\"}");
+ assert(request_count==requests_before+1 && strstr(last_form,"code=test-code") && !strcmp(status.state,"login_error"));
+ access_token=copy_string("url-test-token",TOKEN_MAX);expiry=clock_s+3600;
+ fail_buffer_alloc=true;int calls=request_count;assert(!poll_temperature() && request_count==calls);fail_buffer_alloc=false;
+ wipe_free(access_token);access_token=NULL;
+ puts("PASS PSRAM code/URL exhaustion avoids network calls; valid callback exchanges the complete code");
  int before=request_count;strcpy(oauth_state,"expected");auth_deadline=clock_s+1200;
  cmd("{\"action\":\"callback\",\"callback\":\"com.bosch.tt.dashtt.pointt://app/login?code=a&state=wrong\"}");assert(request_count==before);
  auth_deadline=clock_s;cmd("{\"action\":\"callback\",\"callback\":\"com.bosch.tt.dashtt.pointt://app/login?code=a&state=expected\"}");assert(request_count==before);

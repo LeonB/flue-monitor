@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_http_server.h"
+#include "cf_tunnel.h"
 
 #include "sensors.h"
 
@@ -35,6 +36,9 @@ extern "C" {
 // starting their own (only one httpd can bind port 80 at a time).
 httpd_handle_t rest_api_start(void);
 
+// Tunnel-task-only fast path for already-public font resources.
+bool rest_api_tunnel_font(cft_stream_t *stream, const char *uri);
+
 // Serializes a reading into the exact same JSON shape GET /api/reading
 // returns -- shared with ws_server's own reading broadcast (via main.c) so
 // both surfaces agree on one schema. Caller must free() the returned string.
@@ -44,6 +48,11 @@ char *rest_api_reading_json(const sensor_reading_t *r);
 // own doc comment) -- diagnostic for chasing an apparent server hang.
 // Call periodically; a no-op before rest_api_start() has run.
 void rest_api_log_socket_usage(void);
+
+// Shared HTTP task only. RAM-only import/export for the Mac's flash backup.
+// Transfer format: versioned binary history_snapshot_t (maintenance endpoint).
+esp_err_t rest_api_history_export(void *buffer, size_t *size);
+esp_err_t rest_api_history_import(const char *body, size_t size);
 
 #ifdef __cplusplus
 }

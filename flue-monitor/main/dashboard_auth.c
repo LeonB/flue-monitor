@@ -160,7 +160,7 @@ bool dashboard_auth_check(httpd_req_t *req) {
 }
 
 bool dashboard_auth_check_csrf(httpd_req_t *req) {
-  char host[96], origin[160];
+  char host[160], origin[160];
   if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof host) != ESP_OK ||
       httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof origin) != ESP_OK) return false;
   bool https = !strncmp(origin, "https://", 8);

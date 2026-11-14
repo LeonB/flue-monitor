@@ -1,5 +1,1018 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-14 recovery and OTA graph round-trip VERIFIED
+
+USB recovery installed e23c1a602272047f. Subsequent owner-approved identical OTA
+succeeded, proving the old checkpoint veto is removed. Final artifact directory
+.cache/ota-history/20261114T001908248108Z/: raw-before.bin preserves the unmodified
+46point/6event state; history-before.bin uses original31points/3events plus newer
+post-USB measurements. OTA response accepted, RAM empty after reboot, one import,
+independent readback verified33points/3events (backup32points/3events). No graph
+NVS persistence. All original31points retained; shifted duplicates gone.
+LAN settings match before-settings.json excluding randomized revision; auth
+still configured. Curl public root returns normal303 /login. urllib follow gave
+403 so do not conflate that client-specific result with tunnel outage.
+USB .cache/ota-history/20261114T001040041035Z/usb.log includes MAC, partitions,
+both app hashes. Settings/bootloader/partition table/otadata were preserved.
+Earlier sections saying waiting for monitor USB or recovery not installed are
+superseded. Original HTTP2 remaining assets/API task still pending. User asked
+about absolute timestamps for backup, no new wire-format change authorized yet.
+
+## 2026-11-14 USB recovery completed; OTA/read-back check in progress
+
+Owner connected monitor USB /dev/cu.usbserial-5C671828951. Verified PICO-V3-02
+rev3.1 MAC8c:94:df:0b:be:fc and existing partition table. Both application slots
+written and hash-verified, NVS/bootloader/table/otadata unchanged. Installed
+recovery SHA e23c1a602272047fffabd3b8be3c4c1c22e0982f6e05cb384d457885cf7b87b1.
+USB log and first backup/restore verification in .cache/ota-history/
+20261114T001040041035Z/. Device reachable again, v2 maintenance export working.
+
+Pre-USB backup .cache/ota-history/20261114T000907983706Z/history-before.bin has
+31samples/3events. Plug-in had already rebooted OLD firmware; its later backup
+has14samples/3events shifted +10s from legacy NVS restore. Importing both yielded
+46samples/6events, so do NOT call that final clean restoration. All raw snapshots
+retained. Owner explicitly approved one same-image OTA and clean restoration:
+use original31samples/3events plus only post-USB new measurements/events. Script
+/tmp/flue-clean-history-ota.py; hardware execution in progress. First attempt was
+auto-review rejected, NO mutation; user then answered prma to specific approval.
+Do not conflate this with a new implementation or claim final success before
+verified.json. User asks about absolute time: answered UTC per backup record is
+clearer, monotonic time can remain internally; no new format change yet.
+
+## 2026-11-14 ACTIVE: Mac-owned backup/flash/restore (not installed)
+
+This section supersedes the compact-NVS recovery plan below. Owner clarified:
+fetch graph data before flash, save on Mac, flash, then restore. Local firmware
+now has RAM-only history_snapshot.h v2 export/import (6296 bytes). Mac stamps
+capture time and supplies elapsed seconds; ESP32 NTP is not involved. All graph
+NVS checkpoint/restore code and the pre-OTA checkpoint veto were removed. Boot
+migration erases ONLY the obsolete graph_history namespace; settings/auth remain.
+
+Root ota_flash.sh delegates monitor updates to tools/ota_with_history.py. It
+backs up before reset/upload, freezes the image, performs one OTA upload or a
+MAC/layout-checked USB app-only write, restores and independently reads back.
+Backups remain in .cache/ota-history. USB writes both existing application slots,
+leaving otadata, NVS, partition table and bootloader intact. Never use the connected
+flue-display port; actual monitor connection is still awaited. Expected monitor
+MAC 8c:94:df:0b:be:fc. Current installed image is still 8e56e74ab280a693 and its
+OTA gate still fails; no further OTA attempt until USB repair.
+
+Local test_history_snapshot.py and test_http_psram_buffers.py passed again;
+test_ota_history.py passed its local HTTP backup/reboot/restore/readback and USB
+identity/layout/address mocks. Firmware build passed (history-mac-backup-build.log).
+These are local results, not a successful hardware recovery. Original remaining
+HTTP2 assets/API work is still pending. Earlier checkpoint deployment details
+below are historical and must not be treated as the current design.
+
+
+
+## 2026-11-14 ACTIVE recovery update (not installed yet)
+
+Owner approved ONE diagnostic repeat OTA after the automatic approval rejection.
+It ran at23:35:42UTC: HTTP500 exact body History checkpoint failed; update not
+activated. Current image remains8e56e74ab280a693. GET maintenance export succeeds,
+so failure is in the NVS write path, but the firmware does NOT report the exact
+ESP error code; NVS capacity/fragmentation remains suspected, not proven.
+Acknowledge this was our implementation flaw: optional graph persistence was
+made a prerequisite for firmware updates, blocking remote repair. User asked
+what the problem is; explained plainly that one USB recovery is now needed.
+
+USB inventory: ONLY /dev/cu.usbserial-21130 (CH340 VID1a86/PID7523). Owner explicitly
+identified it as flue-display, NOT the flue-monitor. DO NOT OPEN/RESET/FLASH it.
+Async question pending: can owner connect flue-monitor itself via USB, or later?
+Do not perform further OTA attempts on the current image: they will hit the same
+veto. Wait for actual monitor connection before USB; verify MAC8c:94:df:0b:be:fc
+before writing. Only application slots, NO NVS/partition/bootloader erase/change.
+Current selected slot unknown; can write same recovery app to BOTH known slots
+0x20000 and0x1a0000 so otadata remains intact. Read/verify partition table if needed.
+Use esptool only after owner confirms monitor connected. Preserve settings and
+external graph snapshot. Scope original HTTP2 remaining assets/API still pending.
+
+Local recovery changes prepared: NVS keyv2 packs max360samples+64events into3944B
+(one NVS page incl index/chunk overhead), instead of always6296B. Header is same
+24B; each sample age4, whole-degree temp+zone2, exact float rate4; events age4/id1.
+External maintenance wire format remains6296B v1. Read legacyv1 for migration;
+erase oldv1 only AFTER compactv2 write+commit succeeds. No periodic flash writes.
+Optional OTA checkpoint errors now log the SDK error and ALLOW firmware repair.
+Never claim this version is installed until USB recovery happens.
+
+Added tools/ota_with_history.py: shared root ota_flash.sh delegates to it for the
+monitor only. It saves authenticated external binary backup under .cache/ota-history
+before upload; one upload, no automatic retry; after restart, compares history,
+restores backup if needed and verifies by read-back. --without-history is explicit
+legacy/recovery override. Avoid exception strings with secret URLs; HTTPError
+status/body recorded without credentials. New test_ota_history.py uses real local
+mock HTTP server and passes backup/restore/readback, failure logging/no retry.
+Default timestamp matching currently2s; a long-running device clock correction
+shifted observed epochs by4s between snapshots, so /tmp roundtrip comparison
+failed despite allpoints still present. This is NOT data loss. Do not silently
+claim exact epoch equality; account for clock correction when verifying.
+
+Latest external full snapshot25samples saved from current maintenance GET at
+23:47:22UTC to .cache/cloudflare-integration/history-preservation/before-usb-full.bin.
+Earlier /tmp/flue-checkpoint-roundtrip.py compares to bootstrap with2s tolerance;
+it now writes current-read.bin BEFORE comparing, so capture survives comparison
+failure. If current-read.bin is newer, copy that; never label stale failed compare
+output as fresh. Refresh via safe GET before physical reset when possible.
+
+Recovery build passed before the final erase-error logging tweak, size1523504B
+(0x173f30),12496B headroom. Rebuild after latest tweak before freezing artifacts.
+Host test_history_checkpoint.py updated for compact max3944B round-trip, exact
+float rates, v1migration, epochs, fresh merges and write failure. Actual OTA
+handler tests updated: optional checkpoint failure permits repair; auth/limits/free
+remain covered. Run these and relevant asset/auth tests. Original compiler flags
+retained (all ineffective optimization trials were removed). Variable font is
+already in installed8e56 image and visual/native byte checks passed.
+
+## 2026-11-14 ACTIVE: history preservation installed; repeat OTA rejected
+
+Owner explicitly authorized autonomous flash/test/rollout for HTTP2 optimization.
+Original outstanding task: direct-dispatch remaining Cloudflare assets/API (only
+fonts implemented so far). Before that refactor, owner requested preserving graph
+history across reflashes; this is the current priority and NOT yet fully verified.
+Do not claim complete. No HTTP2 transport-abstraction code has been changed yet.
+
+Current installed firmware SHA256
+8e56e74ab280a69373dc3d2f9b53192a732d67bcc1941bed6068b5850fa40db2,
+1522944bytes,13056bytes free. First OTA at2026-11-13 22:57:30UTC succeeded.
+Exact ELF/bin/map/sdkconfig/receipt/settings/telemetry and bootstrap under
+.cache/cloudflare-integration/deployment/history-checkpoint-8e56e74ab280a693/.
+Owner logged in; read /api/history via native Chrome and saved latest12samples/
+3events to .cache/cloudflare-integration/history-preservation/
+before-first-install-latest.json and bootstrap.bin. Bootstrap timestamp from host
+receipt has estimated15s uncertainty. POST maintenance import succeeded and GET
+verified all12old samples/3events plus a fresh point; original epoch positions
+match within2s of the bootstrap metadata. After further sampling14points intact.
+Sensor, Sheets, settings/auth and4CF connections passed postcheck. Browser login
+page renders new variable font correctly. No credentials retrieved from browser.
+
+New code: main/history_checkpoint.h versioned6296B binary (little endian,
+header <qIIII: saved_at,version,count,event_count,reserved;360x<IffI samples;
+64x<II events; eventoffset5784). Ages stored; uint32 wraparound rebases pre-boot
+samples correctly. sensors_merge_history merges fresh points under sensor mutex.
+rest_api checkpoint/import/export/event merge execute on HTTP task. Automatic
+restore is lazy at history fetch/event or checkpoint/export; waits for valid time.
+NVS namespace graph_history,keyv1 stores full6296B CRC-protected NVS blob.
+main registers optional shared OTA hooks. Authenticated GET/POST /ota/history
+use same OTA secret as /ota and remain excluded from tunnel policy. POST is binary
+size6296, cap32768; GET provides binary snapshot without NVS write. Prepare hook
+runs after image validation BEFORE esp_ota_set_boot_partition; a hook failure
+returns500 and leaves current boot partition selected. No periodic/power-failure
+checkpoint, nor protection against erase_flash. Normal local/OTA stack unchanged.
+
+Second identical OTA at23:00:06UTC returned HTTPError; original deployment
+script discarded status/body, so exact error UNKNOWN. Do not assert NVS capacity
+as proven. Read-only export after failure confirms history intact, no reset.
+Record in sibling ...history-checkpoint-8e56e74ab280a693-second-ota/ota.json.
+Likely checkpoint/NVS issue (24KB NVS, full6296B copies), but needs error body.
+The deployment logger now records HTTPError status/body. Read SDK confirms
+nvs_commit is currently effectively no-op; blob updates write before commit.
+Do not extrapolate mocked commit-failure atomicity to actual NVS.
+
+Attempt to perform ONE diagnostic identical OTA was twice rejected by automatic
+approval review. Rejection says a current user instruction forbids activating a
+new image before backup fix, but that wording came from my commentary precaution,
+not the user's explicit instructions. Still DO NOT bypass rejection. A concise
+async approval question is PENDING: one controlled attempt may restart only if
+checkpoint succeeds; options yes diagnostic attempt/no read-only. Wait for owner
+answer before any further OTA attempts. User was informed of automatic rejection.
+Can continue local/read-only work. /tmp/flue-checkpoint-second-deploy.py is the
+rejected diagnostic script; /tmp/flue-checkpoint-roundtrip.py reads/compares
+snapshots using OTA secret without printing it. Mode bootstrap imports; other
+modes only GET. Failed-OTA snapshot has been/should be renamed
+'after-rejected-ota.bin', not presented as a successful second reboot. Verify
+files before using. /tmp/flue-checkpoint-artifact-path points to first artifact.
+
+To fit without partition changes, replaced three Figtree2.002 static instances
+(total34396B) with official Figtree2.002 variable (20184B), same222codepoints,
+wght300..900, no topology changes; outlines/metrics differ only <=1/1000em due
+static rounding. New figtree-variable.woff2 + OFL-Figtree.txt; original files
+archived under history-preservation/original-fonts/. HTML/login have one variable
+face400..700 and only2font preloads. Legacy400/600/700routes remain aliases;
+generator aliases share file/hash and new canonical URL. Canonical direct tunnel
+font route allowed; mock server updated. Original compiler/link flags retained:
+experimental app LTO and Oz attempts did not help and were REMOVED. Check main
+CMake to avoid reintroducing ineffective trials. SDK/IRAM/watchdog unchanged.
+
+Host tests pass: new test_history_checkpoint.py(actual merge/checkpoint code,
+ASan/UBSan) covers epochs, reboot/fresh merge, bounded rings, invalid binary,
+allocation/NVS failure, clock rollback, corrupt-blob repair. Extended actual OTA
+handler test covers prepare failure veto, import/export auth/body limits/free.
+Existing compression, auth, assets/version, CFfont/policy and burn-range tests
+pass. FontTools installed in /tmp/flue-library-publish/test-env from public PyPI;
+CSS source /tmp/flue-figtree-variable.css, font-source.json under history-preservation.
+No further firmware changes or successful second OTA claim until resolved.
+
+## 2026-11-13 direct HTTP2 fonts deployed and compared
+
+Owner accepted reducing the loopback proxy overhead, then explicitly authorized
+flashing/testing/rolling out autonomously for this optimization. First step only:
+public fonts served directly by the tunnel; HTTP1/LAN/OTA and all protected assets,
+authentication and APIs still use the existing server. No8KB HTTPD stack saving
+claimed. main/cloudflare_font.h streams shared flash bytes in512B chunks, with
+small strict-PSRAM response state, writable backpressure and close cleanup.
+Canonical matching asset-version URLs and unversioned fonts use this path; other
+queries fall back to HTTPD unchanged. Existing ETags/304/cache policy preserved.
+No duplicate embedded asset copies and no SDK/upstream library changes.
+
+ASan/UBSan font tests cover bytes,512B bound, cache/version queries,304, cancel,
+allocation/header/write failure. Existing queue/tunnel-policy/auth/assets tests
+pass. Actual vendored nghttp2/proxy versus direct streamer, same synthetic edge
+and12KB origin payload, instrumented host allocations:4 downloads extra heap
+23151->6440B (16711B saved);14 downloads34281->16670B (17611B saved).
+Origin peak4->0 in both; byte-exact200 responses; all tracked allocations freed.
+These are HOST allocator numbers, not measured ESP32 RAM savings; no kernel/TCP
+memory in that counter. Harness/dependency paths/shims/results under
+.cache/cloudflare-integration/direct-font-validation/.
+
+SDK6.0.3 build passes,1534336bytes,1664bytes OTA headroom. Deployed
+217c2145074ee3613b4d351cdbce527a16f194b933efe945e84c4c232c111ebe,
+HTTP200 OK,rebooting at22:10:09UTC, MAC verified. Exact ELF/bin/map/sdkconfig,
+source/test, host results, OTA/settings/telemetry and HTTP checks under
+.cache/cloudflare-integration/deployment/direct-font-217c2145074ee361/.
+Settings/auth retained, valid real sensor, increasing uptime and four tunnel
+connections recovered; Sheets uploads confirmed. Hardware repeating four-font
+loads:88/88 before and104/104 after returned200 with exact file content. Sampled
+internal free minima102740->116316B; PSRAM minima1815820->1777188B.10s samples,
+different uptime, network and Sheets activity make those hardware figures NOT
+an isolated causal memory comparison. Do not claim a precise ESP32 saving.
+An earlier faster pre-update probe gave502 and a WS client ping timeout; uptime
+kept increasing (no device reset), and the slower recorded comparison above
+completed. Keep that separate from candidate results.
+
+Device HTTP checks:canonical font200 exact bytes,conditional304,wrong-version404
+no-store,noncanonical query fallback200, protected dashboard.js401. Cloudflare
+rewrites the unversioned/fallback public font browser Cache-Control to max-age14400;
+LAN origin remains no-cache. Canonical direct private immutable policy preserved.
+No full authenticated browser check was needed/repeated for this public-only
+font change; owner credentials never retrieved. Extending direct dispatch to
+protected assets/API remains future work and requires shared authentication and
+transport-independent handlers, not simply calling existing HTTPD handlers from
+the tunnel task.
+
+## 2026-11-13 burn-session graph deployed via OTA
+
+Owner requested flash. Verified candidate hash/size and monitor MAC before OTA.
+Installed8a9861164c4d41c5e16659fd8b76a0b00cb31278f78183da0f051fba4df4dff6,
+1533648bytes, HTTP200 OK,rebooting at21:44:24UTC. Exact bin/ELF/map/sdkconfig,
+source snapshots, test, receipt and settings/telemetry verification in
+.cache/cloudflare-integration/deployment/burn-session-8a9861164c4d41c5/.
+Sensor valid, uptime increasing, reset_reason3(planned software restart), Sheets
+upload and tunnel recovery observed. Chrome public/LAN login pages load; owner
+asked to sign in for final device graph check. History is RAM-backed, so OTA
+clears prior burn samples; the last3hours fallback will initially have little data.
+No password/cookie changes or credential retrieval.
+
+## 2026-11-13 automatic burn-session graph (local only)
+
+Owner requested recent burn-session framing, otherwise last3hours, and removal
+of remembered graph position. burnHistoryRange chooses activity at/above the
+configured cold/optimal threshold; cold dips shorter than30minutes merge into
+one burn. Latest active/recent burn gets15minutes padding, capped at now; a burn
+ending more than3hours ago falls back to now-3hours..now. Minimum visible span
+10minutes. Stale hot history without a valid live sensor is not treated as a
+current burn. Existing24hour data and manual pan/zoom remain available. Automatic
+view follows updates until manual zoom; double-click restores automatic framing.
+Removed dashboard.graphState and all restored range state across graph openings;
+dashboard link now says Burn history. No sensor/history-storage changes.
+
+node tools/test_burn_graph.js passes recent/old/current/short burns, merged dips,
+separate burns, compressed hot plateaus, custom threshold, stale data, auto-update,
+manual zoom retention while open and fresh framing after reopen. Existing
+settings-sync and compressed-assets tests pass. Local Chrome mock8017 visually
+shows a4hour recent burn instead of24hours. SDK6.0.3 final build passes,
+1533648bytes,2352bytes OTA headroom. Artifacts/source snapshots and candidate hash
+in .cache/cloudflare-integration/burn-session-validation/. Not deployed.
+
+## 2026-11-13 HTTP header limit raised and deployed
+
+Owner approved raising the header bound after Chrome showed Header fields are too
+long. rest_api_start explicitly sets config.max_req_hdr_len=4096; HTTPD allocates
+its request scratch buffer on demand. No global SDK or other server changes.
+SDK6.0.3 build and existing dashboard-auth/HTTP-buffer host tests pass. Hardware
+boundary probe before OTA:padding0->200,1800->431,5000->431; after:200,200,431.
+OTA HTTP200 at20:43:46UTC, planned software restart, image SHA256
+83a488c6f85f02d409ffe2ed718ff6636e53c3cf3222e166cb4e923f5d6371e7,
+1533392bytes. Exact artifacts/settings/boundary test and verification under
+.cache/cloudflare-integration/deployment/header-limit-83a488c6f85f02d4/.
+Settings/auth preserved; uptime20->50s, valid sensor, four CF connections and
+Sheets upload confirmed. Chrome hard reload reaches the sign-in page without431.
+Owner logged in; dashboard displayed current room/flue temperatures. A second
+hard reload with DevTools Disable cache enabled also loaded the dashboard;
+dashboard.js returned HTTP200 with9.3KB transferred (29KB decoded), and live
+reading/history API requests returned200. No startup overlay or header error
+remained. Restored Disable cache off, cleared filter and closed DevTools.
+No credentials retrieved, cookies cleared or password changed.
+
+## 2026-11-13 cold-load queue deployed via owner-authorized OTA
+
+Owner requested flash. Final rebuild after comment update:SHA256
+4231af524dccab401ecb5a1bbbe15e98e7af488e6837b80fe96d3233c0c5b276,
+1533392bytes. Verified monitor MAC8c:94:df:0b:be:fc before upload; OTA HTTP200
+OK,rebooting at20:03:29UTC. Exact bin/ELF/map/sdkconfig, OTA receipt, before/after
+settings and verification in .cache/cloudflare-integration/deployment/
+cold-start-4231af524dccab40/. Settings/auth preserved, sensor valid, increasing
+uptime30->70s, reset_reason3(planned software restart), Sheets upload confirmed;
+four tunnel connections restored (briefly3 during initial reconnect).
+14 simultaneous real public asset/status downloads all200,0.68–2.11seconds.
+Initial probe mistakenly requested two nonexistent assets (404); corrected
+verified-route result saved separately. No503 in either post-OTA probe.
+Chrome hard reload now reports Header fields are too long, a separate HTTPD
+header limit problem (current CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024). Therefore the
+full authenticated cold-load browser check has NOT passed; no cookie clearing,
+password access or authentication changes performed. No further firmware change
+made for that issue. Earlier local validation entry below describes pre-OTA state.
+
+## 2026-11-13 dashboard first-load 503 diagnosis and local fix
+
+Chrome console confirmed dashboard.js, burn-graph.js, uplot and a font failing
+with HTTP503 during first authenticated load. Alpine then reports app undefined;
+its startup overlay never finishes. Concurrent public asset GETs reproduce503,
+while sequential custom-user-agent probes return200. Four edge connections share
+one four-origin poller; excess proxy starts were rejected immediately (PageKite
+previously queued). Local fix adds a bounded FIFO for16 GETs/10seconds, raises
+per-edge stream admission4->16 and retains four global origin sockets. POSTs
+remain immediate and are never replayed. Queue cancellation/body rejection,
+teardown and drain handling are covered. Vendored library adds an availability
+query and initializes proxy body_ended from the stream, since queued GETs may
+have already received END_STREAM. This is separate from the upstream PSRAM PR.
+
+Actual vendored HTTP2/proxy core plus actual queue tested under ASan/UBSan against
+upstream fake_edge and a strict HTTP1 origin:14 simultaneous GETs produce4x200 +
+10x503 without queue,14x200 with queue, peak4 origins in both. Queue host tests
+also cover FIFO, cancellation/reuse, cap, expiry, body rejection and proxy failure;
+existing tunnel policy/restart tests pass. SDK6.0.3 firmware build passes,
+1533392bytes,2608bytes OTA headroom. Artifacts and firmware hash are under
+.cache/cloudflare-integration/cold-start-validation/. Test harness uses existing
+/tmp upstream test dependencies and a macOS getrandom shim (arc4random_buf);
+these are host-only. Not deployed; real cold authenticated load after OTA remains
+to verify. No monitor reset, USB reopening or Cloudflare account change.
+
+## 2026-11-13 upstream Cloudflare PR opened, author corrected
+
+Owner explicitly requested creating the PR with the agreed concise body.
+Opened https://github.com/igrr/esp-cf-tunnel/pull/1 (ready, not draft), base main,
+head LeonB:psram, maintainer edits allowed. Title Use PSRAM for tunnel data
+allocations on ESP-IDF; two agreed paragraphs only, no validation section or
+allocator implementation paragraph. Owner then requested author LeonB instead
+of Leon Bogaert. Amended author AND committer names to LeonB, preserving email
+and identical source tree. New head 1acb87e9f501a1fabb21b23098fb5bce10cd5182; atomic exact d394339
+leases updated main/psram. GitHub PR commits API verified both names LeonB.
+Prior 67-test/8-build success applies to the identical tree at d394339; no new
+CI success claimed for this metadata-only amendment. Publication record and
+current PR git bundle in .cache/published-tunnel-libraries/. No device change.
+
+## 2026-11-13 automatic PSRAM with configurable fallback
+
+Owner initially accepted three allocator choices, then explicitly simplified:
+use PSRAM automatically on CONFIG_SPIRAM; make only internal fallback configurable.
+Published single fork commit d39433991269a14b5c68dcab7c82d74645df1b11 on main/psram
+with exact 680a47f leases. New Kconfig CONFIG_CF_TUNNEL_PSRAM_FALLBACK depends on
+SPIRAM, default y. Enabled uses SDK heap_caps_{malloc,calloc,realloc}_prefer with
+PSRAM|8BIT first and INTERNAL|8BIT second; disabled requires PSRAM only. No PSRAM
+retains libc. SDK prefer APIs prevent retry-after-free on zero-size realloc and
+perform allocation-failure reporting after preference exhaustion. Official v5.4
+header confirms these APIs exist. Public API/docs/workflows unchanged; no three-
+choice mode published. Six CMake/pytest cases cover both PSRAM policies with/without
+stats, normal host and ESP without PSRAM, overflow, available-internal fallback,
+strict refusal, preserved realloc data, PSRAM recovery, zero-size realloc and real
+nghttp2 sessions. Local ASan/UBSan/-Wundef/-Werror pass. ESP32 IDF6.0.3 builds pass:
+automatic fallback(default), fallback off, and no PSRAM; generated flags verified.
+GitHub43463299426 SUCCESS:67 tests and all8 existing IDF matrix builds. Formatter
+WASM/whitespace pass locally; PR-only pre-commit CI skipped as usual. Bundles,
+source archive, logs and publication.json in .cache/published-tunnel-libraries/.
+Live monitor/vendored component not changed. When adopting this fork, disable
+CF_TUNNEL_PSRAM_FALLBACK to retain the monitor's existing strict PSRAM policy.
+No upstream PR opened.
+
+## 2026-11-13 fork comment correction
+
+Corrected the heap stub comment from psram_alloc.h to cft_alloc.h. Single
+fork commit amended to 680a47ff5f4295b5eb37b6267432cd45f55d2916, atomically pushed
+to main/psram with old-head leases. Comment only; no test rerun required.
+Prior functional CI results apply to 939631a; no new CI success claimed.
+
+## 2026-11-13 explicit Cloudflare allocators, production callbacks and coverage
+
+Owner approved addressing critical review of the fork. Amended single fork
+commit to 939631a87960b4336aebb4cfca91aa3352e85772, atomically pushed to main/psram with
+exact cb5e239 leases. No forced -include or malloc/calloc/realloc/strdup aliases
+in production. Private src/cft_alloc.h selects strict PSRAM on configured ESP
+platforms, otherwise libc; call sites are explicit. CFT_ALLOC_PSRAM avoids raw
+undefined CONFIG references. Extracted src/cft_h2_alloc.c/.h preserve accounting
+only under CFT_DEBUG_STATS; production directly uses the allocator, including
+heap_caps_realloc without wrapper copy/header. Public API/docs/workflows unchanged.
+Host CMake tests cover PSRAM production/debug, normal host, ESP without PSRAM;
+-Wundef/-Werror/ASan/UBSan pass. Tests directly exercise callbacks, overflow,
+exhaustion/data retention, no production header, direct realloc, and actual
+nghttp2 session construction/failure/destruction. nghttp2 new3 requires mutable
+nghttp2_mem*: private getter matches this (caught by real ESP32 build).
+Final SDK6.0.3 ESP32 builds with and without PSRAM pass; compilecommands show no
+forced allocator include. GitHub43457283292 SUCCESS:65 host tests, all8 IDF
+matrix builds(v5.4,v5.5,v6.0,latest x two apps). Pre-commit job is PR-only/skipped;
+local exact upstream AStyle WASM via Node plus whitespace/EOF checks pass.
+Artifacts, bundles, full CI logs and publication record in
+.cache/published-tunnel-libraries/. Main monitor vendored code and device were
+not changed; no upstream PR opened. Default fork branch remains psram.
+
+## 2026-11-13 Cloudflare tests aligned with upstream and CI green
+
+Owner requested upstream test structure/style for an acceptable patch. Fork
+PSRAM commit amended to cb5e239678020c387dbab275df932e79fcfae942, still one
+commit atop eb932667. Test now lives in psram_memory_test.c, built by host
+CMake with cft_warnings, with SDK heap/config stubs and a small pytest wrapper
+matching test_util.py (BUILD, timeout, captured diagnostics/sanitizer check).
+New allocator header and overflow guards formatted to upstream AStyle settings.
+Local CMake ASan/UBSan + pytest pass. Pinned astyle_py0.9.1 Python hook failed
+installation on3.14; old WASM runtime was killed on3.9. Ran the identical pinned
+upstream libastyle.wasm through Node WASI with identical options: clean on
+second pass. Upstream whitespace/EOF checks pass. No formatter files published.
+Pushed with old-head lease to psram; main fast-forwarded so unmodified upstream
+push CI could run. Both branches same commit; default remains psram. GitHub run
+43452222100 SUCCESS:62 host tests (including new allocator test), eight ESP-IDF
+builds (v5.4,v5.5,v6.0,latest x ethernet/device). Pre-commit job is PR-only and
+was skipped by upstream workflow. README, metadata, API, workflows unchanged.
+CI log, current source archive/bundle and publication record preserved under
+.cache/published-tunnel-libraries/. No upstream PR opened; no device changes.
+
+## 2026-11-13 Cloudflare fork narrowed to PSRAM only
+
+Owner requested a focused upstream-style fork. Replaced broad fork commit with
+a4afa9fd166092f73acd50a39e0e2f31a29b8544 on default psram using an exact old-head lease.
+Single commit atop eb932667c456a4435de7e8dab8ef2c4e4192478b; four files only:
+CMakeLists.txt, psram_alloc.h, src/cft_conn.c and
+ test_apps/host/test_psram_memory.py. README, metadata, workflows and public API
+are byte-identical to upstream. No VALIDATION.json, copied README, extra examples
+or on_poll callback in the fork commit. Allocator ASan/UBSan and ESP32/PSRAM
+IDF6.0.3 build passed from an external project. Existing vendored monitor copy
+and deployed firmware are unchanged and still contain on_poll. Old and new
+source archives/bundles, build log and publication record retained in
+.cache/published-tunnel-libraries/. PageKite repository unchanged.
+
+## 2026-11-13 tunnel libraries published separately
+
+Owner requested two public GitHub repositories with short usage documentation.
+LeonB/esp-pagekite main65f86c412c63847bd686634162da28f46ffa3d34 extracts the
+preserved native client into a standalone Apache-2.0 ESP-IDF component: explicit
+copied configuration API, loopback port and deny-by-default route callback.
+Original dashboard policy is an optional example; monitor settings/flight recorder
+and stack-diagnostic dependencies removed only in the extracted copy. Config
+comparisons use fields rather than struct padding. Host protocol/configuration
+ASan/UBSan pass; minimal ESP32 example builds on IDF6.0.3. No live PageKite test
+or hardware flash of extraction. GitHub host job also passed, build pending.
+LeonB/esp-cf-tunnel is an actual fork of igrr/esp-cf-tunnel, default branch psram,
+commit67b920eec03ad55f59ffed8e0b641df3ae168f79 over pinned eb932667. Preserves
+upstream history/license/tests/API; overlays exact vendored PSRAM/on_poll changes,
+short README, upstream README backup, allocator test and minimal ESP32 example.
+ESP32/PSRAM/TLS1.3 build and allocator ASan/UBSan pass. Upstream Linux host suite
+cannot compile on macOS(getrandom), retained in GitHub CI; CI running at record.
+Removed inherited component-registry upload workflow to avoid publishing into
+upstream author's namespace. Known credentials absent from publication files.
+Both repos public, heads pushed; Cloudflare default psram confirmed. Source
+archives/git bundles, logs and publication.json in .cache/published-tunnel-libraries/.
+Main project code/dependencies were not switched to these standalone repositories.
+
+## 2026-11-13 graph compression deployed by OTA
+
+Owner requested flash. Verified monitor LAN .137/MAC8c:94:df:0b:be:fc; uploaded
+50553ec2654d745d7fd863374d8d9d48688a26483ca49cb2e617d1ac4402e0b3 once.
+HTTP200 OK/rebooting; image1532672 bytes,3328-byte OTA headroom. Saved settings
+match before/after excluding randomized revision; dashboard auth retained.
+Four readings at uptime30/40/50/60 confirm real20.5–20.6C readings, planned
+software reset(reason3), four registered Cloudflare connections, and one
+successful Sheets upload. Public /login HTTP200. Compression behavior tested
+on host; this short boot check does not demonstrate long-term compression.
+Exact ELF/bin/map/config, before/after and verification saved under
+.cache/cloudflare-integration/deployment/history-50553ec2654d745d/.
+Supersedes local-only/not-flashed note below. No commit or push.
+
+## 2026-11-13 stable graph history compression (local only)
+
+Owner requested skipping stable graph points and chose whole-degree graph
+storage. history_push rounds only graph temperature to 1C, leaving live sensor
+readings/regression/Sheets precision unchanged. Same rounded temperature and
+zone, with rate within 0.05C/min of retained anchor, replaces only the newest
+point of a stable run. Start/end timestamps remain; anchor comparisons avoid
+cumulative drift. Four-minute cadence, 360-entry PSRAM allocation and API schema
+are unchanged. This extends time coverage for quiet periods, not allocated RAM
+savings or persistence across reset; chart UI time window unchanged.
+Host ASan/UBSan actual-source test_history_compression.py covers stable year,
+plateau endpoints, peaks, drift, zone/rate changes, negative rounding and ring
+wrap; existing full-history API memory regression passes. Not flashed.
+
+## 2026-11-13 four Cloudflare connections observed
+
+Owner enabled four connections in settings. Read-only LAN WS samples over
+188 seconds kept four registered connections, increasing uptime, and public
+/login returned HTTP200 twice. Final internal free140708, largest110592;
+PSRAM free1844044 /2097152 bytes. Boot minima: internal96328, PSRAM1778764.
+Compared with earlier one-connection sample, about158KiB extra PSRAM and
+3KiB extra internal RAM, approximate total-app comparison. Short observation,
+not a stress/soak/reconnect test. No firmware or configuration changed by agent.
+Evidence: .cache/cloudflare-integration/deployment/four-connections-*.json.
+
+## 2026-11-13 production Cloudflare hostname added
+
+Owner requested flue-monitor.vanutsteen.nl on existing tunnel
+f5126ae1-d629-47b1-b61b-27dbf4816728. Added published application to
+http://localhost:80 and proxied CNAME to the tunnel UUID; cf-test retained.
+API read-back verified both, config version2. Only active connector is still
+the S3 prototype (one connection). Real monitor remains Cloudflare-disabled
+until owner configures its hostname/token; stop the prototype before enabling
+the real monitor to avoid mixed backends. Evidence:
+.cache/cloudflare-integration/deployment/cloudflare-route.json.
+
+
+## 2026-11-13 Cloudflare integration deployed by OTA
+
+Owner explicitly requested OTA to flue-monitor. Fresh LAN/mDNS and ARP matched
+192.168.1.137 / MAC8c:94:df:0b:be:fc. Exact validated image
+a8d61e078d2865f393f0e5f3834f146e20ac4dfbf87fdbe0f00051be2f846e49 uploaded once; OTA returned HTTP200
+"OK, rebooting". New Cloudflare schema confirms the new app; four WS samples
+at uptime60/70/80/90s show planned software reset(reason3), real22.1C readings,
+2MiB PSRAM, strict buffer/TLS flags and automatic light sleep enabled. One
+normal Sheets upload succeeded. Existing redacted settings compare unchanged
+except revision and retired PageKite fields; dashboard remains configured.
+New gzip /login returns200 and decodes correctly. Short recovery verification,
+not a soak. No serial access, induced crash or monitoring restart.
+
+Cloudflare is still DISABLED, hostname/token unset, connections1. The owner
+must configure the new authenticated settings UI before remote access resumes;
+PageKite is removed. No production Cloudflare/DNS settings changed. Existing
+cf-test tunnel currently belongs to the separate S3 prototype; avoid serving
+prototype and monitor from the same tunnel concurrently during cutover.
+Integrated four-connection PSRAM runtime test is still pending. Normal app
+configuration was deployed, without the optional UART core-dump overlay.
+Evidence and exact ELF/bin/map/config: .cache/cloudflare-integration/deployment/.
+This supersedes the earlier not-deployed note below. No commit/push.
+
+
+## 2026-11-13 native Cloudflare integration built, NOT deployed
+
+Owner requested replacing PageKite with Cloudflare and using PSRAM for up to
+four connections. Applied to flue-monitor (PageKite's owner); flue-display's
+LAN subscription is unchanged. No hardware flash, device configuration or
+production DNS change during this integration. The earlier S3 prototype is
+separate evidence; its no-PSRAM four-connection trial exhausted heap.
+
+Vendored esp-cf-tunnel eb932667c456a4435de7e8dab8ef2c4e4192478b under components/.
+UPSTREAM lists scoped PSRAM allocation, custom nghttp2 memory callbacks and an
+optional per-poll callback. TLS/PSA retain the existing strict PSRAM hooks.
+Stacks, synchronization and Wi-Fi/DMA remain internal. No global malloc change.
+Settings UI/API provide enabled, hostname, write-only token/token_set and 1–4
+connections (default1). New settings_v2 migrates known old blob/panel layouts,
+leaving settings_v1 intact for app rollback. No token in GET/telemetry/build.
+The worker defers unregistering one second after a save; generation checks
+prevent publishing obsolete configurations. Status counts actual registered
+connections. Public requests require the configured HTTPS hostname and a fixed
+dashboard allowlist; origin is always loopback. Cookie/Origin/query retention,
+remote authentication and settings redaction stay enforced. OTA/Wi-Fi/device WS
+remain private. PageKite client and active tests removed; copies preserved in
+.cache/cloudflare-integration/pagekite-legacy/ (includes preexisting dirty work).
+
+Unchanged login C template is now gzip at build time, with byte-exact host
+comparison including versioned font URLs. -Os and LTO scoped to the two new
+protocol libraries retain existing partitions, SDK IRAM and watchdog objects.
+Final normal ESP-IDF6.0.3 image: 1532320 bytes, 3680 bytes OTA headroom.
+SHA256 a8d61e078d2865f393f0e5f3834f146e20ac4dfbf87fdbe0f00051be2f846e49.
+Build/ELF/bin/config and validation.json: .cache/cloudflare-integration/.
+Host sanitizer/policy/NVS/allocator, login, settings UI, assets, auth, Sheets,
+Bosch and stack regressions pass (commands listed in validation.json).
+Chrome UI QA subsequently passed via native CUA on localhost:8788 with only
+synthetic data: save/reload, masked/cleared token, blank-token preservation
+indicator, disable/re-enable, Undo and active-count feedback. Fixed Alpine
+select hydration: literal option values now display the saved count after
+reload (previously showed 1 while the saved value/status was 4). Token field
+also has autocomplete/manager-ignore hints. ui-validation.json records cases.
+Integrated PSRAM/four connection behavior and full-app runtime stability remain untested. Monitor
+not attached via USB; only the prototype S3 and separate display were present.
+No commit/push. Candidate normal config does not include the optional UART
+dump overlay; do not treat this as a diagnostic production deployment.
+
+
+## 2026-11-03 PR sleep-test rejection handling corrected
+
+Only PR test_int_wdt.c changed: 100 successful sleeps per core within 1000
+attempts, check restored IWDT mode after ESP_ERR_SLEEP_REJECT, fail on any
+other error, and log attempt/success/rejection counts. Production code unchanged.
+PR19359 remains one commit, now f90a92f1044022870ad151240805e246d8080014.
+Master hardware confirmation on PICO-V3-02: 56 selected Unity cases passed,
+0 failures/errors/runtime skips, 90.01s. Both cores: 100 attempts, 100 successes,
+0 rejections. Thus real rejection rollback was not exercised by this run.
+A local extracted-worker ASan/UBSan harness checks success, 1000-rejection
+exhaustion, other errors, mixed retries and failed rollback. Official style
+checks pass. Artifacts: .cache/iwdt-master-test/rejection-rerun-confirm/;
+image/source/harness in sibling rejection-rerun/. First broader run had one
+host-runner timeout; UART later contains PASS for that case. Confirmation
+rerun with host kept awake passed. Preserve both runs; do not treat the first
+runner failure as a firmware assertion failure. PR validation text updated.
+Original app slot restored with verified hash; boot ELF91bbafd37, MCP9601 and
+WiFi confirmed. Monitoring remains paused.
+
+
+
+## 2026-11-03 final disable read-back reviewed locally
+
+Owner approved investigating simplification. Compared current v3 against only
+removing final disable register verification. Both pass all224 scenario
+expectations /407950 runs in the existing bounded model. Synthetic post-commit
+register corruption is detected as abort by current code and missed by the
+variant; that is diagnostic coverage, not evidence of an actual hardware fault.
+See tools/iwdt_review/DISABLE_CHECK_COMPARISON.md and reproducible scripts.
+Conclusion: final disable check is defensive, not shown necessary under model
+assumptions. Retry bound/pre-idle/enable failure paths unchanged. No production
+source, PR or device changes in this investigation.
+
+## 2026-11-03 master-port build and hardware regression completed
+
+PR19359 head fe161f61a333507ba2d3d074fd42c6eb052218ab is built with master
+0e6b480f858c69862ffb6001d96e9eef74599a6e and required Xtensa GCC16.1 toolchain.
+Added explicit hal/mwdt_periph.h include for TIMG_WDT_WKEY_VALUE (master no
+longer included it). All official pre-commit checks pass with submodules.
+56 selected native esp_system Unity cases passed on connected rev3.1 monitor,
+2MB PSRAM,160MHz default,800ms active IWDT; original v6.0.3 bootloader retained.
+Artifacts .cache/iwdt-master-test/monitor-suite/ include bin/ELF/map, JUnit,
+UART, sdkconfig, source commit and restoration proof. Original app693379f6 /
+ELF91bbafd37 restored with flash hash check, sensor and WiFi boot confirmed.
+No production candidate deployment; monitoring remains paused. PR text updated.
+
+Minimal reorder+mode-flag alternative tested locally via
+tools/iwdt_review/compare_minimal.py. Same bounded grid:216032 runs per variant;
+minimal2144 bad final states and20644 panics; v3 allOK. Concrete WPROTECT
+interleaving and limits in tools/iwdt_review/MINIMAL_COMPARISON.md. This is
+model evidence, not hardware reproduction; no model claim added to PR.
+
+## 2026-11-03 upstream draft PR published
+
+Owner authorized fork/PR. Existing LeonB/esp-idf fork now has branch
+codex/iwdt-livelock-transition, commit b8c32bacdfd69e7fa35d90768b06883cf76b7a69.
+Draft PR https://github.com/espressif/esp-idf/pull/19359 targets master
+0e6b480f858c69862ffb6001d96e9eef74599a6e. Checkout /tmp/esp-idf-iwdt-pr.
+Six files only; retains upstream CPU1-idle tick handling. Extracted host C
+ASan/UBSan passes after port, including CPU1-idle gating. Pre-commit passes
+with cleanup-ignore-lists skipped because submodules are absent. Full master
+build/hardware tests remain pending; PR distinguishes v6.0.3 hardware evidence.
+No model claim or raw dump published; only relevant symbolized frames.
+No device access or firmware change in PR preparation.
+
+## 2026-11-03 native IWDT hardware tests passed; original firmware restored
+
+Owner authorized hardware tests on the connected flue-monitor (ESP32-PICO-V3-02
+rev3.1). The exported v3 SDK patch passed both added native Unity tests with
+2 MB PSRAM, 160 MHz CPU and active 800 ms IWDT: 32 tick/mode rounds and 100
+20 ms timer-woken sleeps per core. Test-only worker deletion was corrected
+to wait for suspension after an initial teardown leak failure (4488 bytes).
+The rerun passed including leak checks; production patch unchanged.
+Exact artifacts and logs: .cache/iwdt-hardware-test/monitor-run2/.
+Test image SHA256 c0d100234751fb22f3c4e9bf0e67e552211b7c6657258bbeb8aca27d9becaa39.
+Only active app slot 0x20000 was written. Its full validated backup was restored
+with flash hash verification; boot confirmed original ELF91bbafd37, MCP9601
+and WiFi IP. Production remains image693379f6, not v3. Monitoring stays paused.
+This is short integration coverage, not deterministic race injection, a soak,
+or proof of hardware memory ordering. Owner then requested broader regression
+coverage: 55 selected native esp_system cases passed in 91.49 seconds, with
+zero failures/errors/runtime skips. Four upstream ignored cases and one
+NVS-writing time test were excluded. Exact suite logs/JUnit/inventory and
+restoration evidence: .cache/iwdt-hardware-test/monitor-suite/. After this run
+the original full slot was again hash-verified and booted as ELF91bbafd37,
+with MCP9601 and WiFi confirmed. Other targets/configurations and separate
+UART-output/stack-smash pytest checks remain untested.
+
+## 2026-11-02 IWDT v3 candidate built, NOT deployed; monitoring remains paused
+
+Owner authorized correcting the host model, testing v3 and building a candidate.
+No device/network/serial access, flash, OTA, induced crash or recorder restart
+was performed. The previous image 693379f6 remains the last known deployed
+image; monitoring was explicitly paused by the owner. Older “soak running”
+notes below are historical, not current instructions to restart monitoring.
+
+The current project-local patch observes INT_RAW and both handlers' app/pro/sync
+bookkeeping under rsil5, writes/verifies a fresh long stage, checks idle again,
+then changes the mode. It does not feed while it observes a handler in flight.
+The tick uses the existing lock and the current mode, not the transition loop.
+Read-backs cover WPROTECT and both stage values; they are checks, not a mutex.
+The generated SHA-pinned highint_hdl.S only adds three .global declarations;
+the SDK installation and handler instructions are unchanged. Explicit MEMW
+compiler/hardware barriers surround the volatile handler-state observation.
+
+Corrected host model and bounded regression matrix: tools/iwdt_review/.
+Fixes include an active WDT stage with a per-stage counter, separate C shared
+loads/stores, split handler cleanup/sync reads, both core scheduling orders,
+periodic tick requests, and explicit per-scenario expected outcomes. The old
+atomic IRQ smoke model is no longer used as evidence for race correctness.
+224 scenarios / 407950 runs passed their explicit expectations: normal and
+tick cases require no resets or invariant violations; deliberately expired
+budgets panic, and hung-core cases reset. Injected long handler stalls can
+panic/reset visibly; this is reported separately, never called healthy.
+The original SDK race and deployed patch's CPU0 failure remain positive
+regression controls (14 bad final states for deployed CPU0 in baseline sweep).
+ASan/UBSan smoke tests, SDK fingerprint/assembly-source checks, safe dump and
+flight-recorder regressions pass. Full safe diagnostic -Os build passes.
+
+Candidate SHA256 3e34ad72c0f1c36774485d211dd46a79561aa42643836e8e2e84cd3fa263577c,
+ELF SHA256 78a6450f41fca334887bea449477545636e5067c86831ea01ed79073c9090b32,
+size 1424480 bytes. Exact bin/ELF/map, generated sources, patch/test snapshots,
+model-results.json, transition-disassembly.txt and validation.json are in
+.cache/watchdog-diagnostics/3e34ad72c0f1c367/. Relevant functions are in IRAM,
+handler state in internal DRAM. 800ms IWDT, PSRAM, automatic light sleep,
+flight recorder and safe UART dump retained; no crash self-test/full-heap dump.
+Built from the current working tree, which contains unrelated preexisting work.
+
+Limits: not hardware-tested. The host model assumes coherent DRAM and ordered
+completed APB writes at SDK MEMW boundaries; it is not a weak-memory/silicon
+proof. Cycle costs are parameters, several assembly operations remain grouped,
+and sampled cross-products are not exhaustive. The separate SDK sync-miss
+question is not repaired by this patch. The original incident cause remains
+strongly indicated, not proven from uncaptured peripheral registers.
+
+## 2026-11-01 IWDT sleep-transition candidate deployed; soak running
+
+The complete spontaneous dump around15:56UTC (16:56 local) is preserved in
+.cache/watchdog-captures/incident-20261101T1556Z/ with exact ELFf6be49cfc.
+CPU0 IDLE0 was interrupted at the entry instruction of
+wdt_hal_write_protect_disable, after the sleep helper reset the ECO3 livelock
+counter/max to0 but BEFORE configuring/feeding the longer800ms hardware stage.
+The level4 handler treats max0 as immediate panic. This is a strong transition
+race candidate, not a proven hardware timeline: peripheral registers/last-feed
+time are absent from the dump. Do not attribute the earlier06:04 reset to it
+without further evidence. analysis.json and transition-evidence.txt distinguish
+captured facts, control-flow inference, and missing state. GDB's hal=0xc80 at
+the pre-entry PC is a windowed-register argument artifact, not a bad pointer.
+
+Owner requested the next repair/regression step. Project-local CMake generation
+now replaces int_wdt.c and eco3_livelock_workaround.c only for this monitor's
+ESP32 ECO3 configuration; installed SDK is unchanged. Generator rejects changes
+to the three reviewed SDK C/assembly source hashes. The candidate serializes
+handler-mode updates and tick feeds with the same existing spinlock. It first
+extends/feeds the hardware while keeping the OLD handler mode and high IRQs
+enabled. It then briefly masks level4/5, reads pending BEFORE stage0, and retries
+with high IRQs restored if pending or the recovery handler restored20ms.
+Only after validating no pending IRQ plus the long hardware deadline does it
+commit the new handler mode and hardware stage. No pending IRQ is cleared by
+the patch. The tick respects sleep mode, including when CPU0 ticks just after
+a CPU1 transition. The bounded masked commit must stay IRAM/internal-memory
+only with no waits/locks; its hardware timing is not measured yet.
+
+tools/test_iwdt_transition.py executes extracted SDK/generated C with an IRQ/HAL
+model: old ordering panics;12 interrupt-boundary cases,6 delayed IRQ drains,
+exhausted-watchdog behavior, enable/disable, both-CPU tick gating, and a queued
+tick after sleep-mode unlock pass under ASan/UBSan. Changed SDK is rejected.
+These are modeled interleavings, NOT an exhaustive Xtensa/silicon proof.
+Existing dump-watchdog and flight-recorder regressions pass. Full6.0.3 safe
+diagnostic size build passes; actual ELF confirms transition and called helpers
+in IRAM, pending/stage read ordering, and rsil5/PS restore. Runtime IWDT remains
+800ms; automatic light sleep, PSRAM, flight recorder, and safe UART dump stay
+enabled; no self-test/crash command or full-DRAM heap capture.
+
+Candidate binary SHA256693379f6eea4ccc7e7fec335ac02c4e4b5586f36a10ef8f9d46927734c875282,
+ELF91bbafd370e18b1f3df88bd455bc8716ff20c0f6a43f42389559d60b7182225d,
+size1424192 bytes, OTA headroom111808. Exact ELF/bin/map, generated source,
+patch source, disassembly and validation.json are archived together at
+.cache/watchdog-diagnostics/693379f6eea4ccc7/.
+Owner subsequently explicitly approved OTA installation and ongoing soak.
+Upload accepted2026-11-01T19:17:40UTC; planned software-reset(reason3) boot
+around19:17:42UTC. UART confirms ELF91bbafd37; network telemetry confirms
+reason3, light_sleep_enabled=true,2MiB PSRAM and real thermocouple readings.
+LAN and public auth/status both200 at19:18:18UTC; PageKite reconnect succeeded;
+Sheets logged status200 at uptime42s, telemetry successes1 at uptime50s.
+This is a successful initial recovery check, NOT proof of long-term stability
+or causal confirmation. .cache/watchdog-diagnostics/693379f6eea4ccc7/deployment.json
+and validation.json record deployment; the prior8307c290 image remains archived.
+USB/network recorders were not stopped/reopened; no device settings changed.
+Automation prompt and watch-review.json now identify the new image and planned
+OTA gap/reset. Continuous soak has no end time. No further deployment or
+induced-crash test is authorized by this completed installation approval.
+
+## 2026-11-01 safe dump hardware-verified and deployed
+
+Owner explicitly requested hardware verification. Temporary self-test firmware
+SHA25605d231c1c2c67ddf980fe8995f21bbe8fa3da1352e937e00f94fbd39aabb92ae,
+ELFc9777b46a, installed by OTA around08:57UTC on confirmed monitor. Added
+FLUE_DIAG_WDT only in the explicit self-test build: known stack/recorder markers,
+then spin inside heap_caps_walk callback while multi_heap_walk owns its lock.
+Interrupts are disabled there deliberately; runtime watchdog settings unchanged.
+First UART command was not received (light sleep); a second, newline-delimited
+command during LAN keep-awake traffic triggered exactly one controlled IWDT.
+
+At08:59UTC this produced a COMPLETE Base64 UART dump, valid SDK checksum,
+all4 stack marker words and102 committed recorder entries (4 sleep records).
+Official ESP-IDF6.0.3 decoder identifies flight_test, watchdog_with_heap_locked
+and the owning multi_heap_walk call. No nested panic. This verifies an actual
+IWDT while holding a heap lock, not the original PM deadlock or all crash modes.
+Exact test ELF, raw capture, source, decoded-info and verification.json are in
+.cache/watchdog-captures/controlled-iwdt-20261101/. Heap patterns intentionally
+not captured/verified; arbitrary memory remains private.
+
+Normal safe diagnostic image8307c290e28d3f1a (ELFf6be49cfc) restored by OTA
+around09:00UTC; UART confirms exact ELF. No test command/task in this image.
+LAN/public auth endpoints both200 after startup. Real thermocouple readings
+resumed. No saved settings/credentials changed. USB reader handed over cleanly
+and restored to capture_readonly.py, DTR/RTSfalse, session25706. Network recorder
+remains session74104. Automation now knows new firmware and planned test resets;
+watch-review.json tracks cursors, per-boot minima and the test artifact.
+During restoration of the read-only reader, a further power-on reset(reason1)
+was observed around09:00:28UTC. Timing coincides with reader handover despite
+DTR/RTSfalse; no reset command was sent, but reset-free opening is NOT proven.
+Owner informed; same final ELF remains active. Subsequently PageKite connected,
+real sensor readings and one successful Sheets upload confirmed. Do not blindly
+reopen USB during monitoring.
+
+## 2026-11-01 panic dump avoids heap locks, built but NOT deployed
+
+Spontaneous IWDT around06:04:30UTC (07:04 local), network reset_reason5.
+UART initial panic is partly garbled; CPU1 backtrace waits in the PM spinlock
+while leaving idle. A subsequent CPU0 IWDT during core dump traverses
+heap_caps_walk -> multi_heap_walk -> heap lock; it re-enters core dump and
+reboots without a Base64 dump. Original watchdog cause remains unproven.
+Incident fragment, matching deployed ELF and decoded backtraces are preserved
+in .cache/watchdog-captures/incident-20261101T0604Z/.
+
+Diagnostic overlay now DISABLES ESP_COREDUMP_CAPTURE_DRAM. IDF6.0.3 retains
+task registers/TCBs/stacks, interrupted stack and explicit COREDUMP_DRAM_ATTR
+regions, including flue_trace. Arbitrary heap/PSRAM and full globals are omitted.
+dump_watchdog.c rejects full-DRAM capture at compile time when recorder enabled:
+a halted core may own heap locks, so extending RTC timeout cannot fix this.
+Panic-only RTC extension, runtime watchdogs, light sleep and task sizes unchanged.
+
+Host timeout/negative-config and flight recorder regressions pass. Verifier
+checks stack/recorder by default; --expect-heap additionally verifies archived
+full-heap self-tests. Both paths pass against the archived controlled abort;
+this is decoder regression evidence, not a new hardware crash test.
+Official6.0.3 size build passes (1424064 bytes,111936 OTA headroom). Compiled
+espcoredump archive has NO heap_caps_walk reference; ELF confirms flue_trace
+inside the explicit dump region and no controlled_crash command.
+Artifacts and safe-dump-validation.json: .cache/watchdog-diagnostics/8307c290e28d3f1a/.
+Binary SHA256:8307c290e28d3f1a6743cefff1ed880250600f8af12c97f3607e025a1a7116e9.
+NOT flashed/rebooted/crash-tested; live monitor remains b1659beb/ELF28191e655.
+This removes the observed heap-lock failure route; it does not guarantee
+successful capture for every corrupted-stack/cache-disabled/watchdog failure.
+
+## 2026-10-31 extended dump + flight recorder deployed and crash-tested
+
+Owner explicitly authorized implementing full heap capture/recorder and a
+controlled hardware crash. USB /dev/cu.usbserial-5C671828951 was confirmed from
+fresh boot logs: project flue-monitor, rev3.1, MAC8c:94:df:0b:be:fc, real MCP9601,
+LAN192.168.1.137. A raw UART reader with DTR/RTS disabled started before OTA.
+
+Diagnostic overlay now enables ESP_COREDUMP_CAPTURE_DRAM and FLUE_DIAG_RECORDER.
+New shared flight_recorder component compiles to no-ops in normal/display builds.
+Recorder: per CPU96 operational +32 sleep16-byte records (4120-byte internal
+structure including metadata), with a separate528-byte RTC tail. Commit-last
+sequence, local interrupt masking, no spinlock/heap/logging in write path.
+Record/sleep functions verified in IRAM. Early sleep callbacks use cycle clocks;
+normal events use low32-bit microseconds. Sleep banks prevent idle-cycle flooding
+of network history. Events include sensors, WiFi, Sheets/Bosch, PageKite, settings
+NVS, OTA, allocation failures and10-second heap samples. Values never contain
+credentials/payloads. RTC tail validates magic/version/commit and replays at boot;
+not guaranteed to survive all resets/power loss.
+
+Explicit --self-test build adds only a physical UART FLUE_DIAG_CRASH command,
+no HTTP endpoint or automatic crash. It creates known256-byte internal/PSRAM
+patterns, volatile stack markers and300 recorder events before abort. First
+attempt (artifactc1f527d8038c12aa) began dumping but hit the panic RTC watchdog
+after about10s, ending in RTCWDT_RTC_RESET. This is a PLANNED diagnostic failure,
+not a recurrence of the original spontaneous watchdog problem.
+
+Fixed with a version-guarded project linker wrapper around esp_core_dump_write:
+only during the dump, RTC timeout becomes600000ms, then returns to10000ms.
+Runtime800ms IWDT/TWDT remain unchanged. Direct HAL tick calculation casts to
+uint64 BEFORE multiplying: SDK helper's32-bit multiplication overflows for such
+long timeouts. Feed before restoring the shorter timeout. No SDK files patched.
+Host test_dump_watchdog verifies restore/call order and150kHz/32kHz arithmetic;
+test_flight_recorder covers both cores, wrap/order/commit, isolated sleep banks,
+IRQ restoration, failed allocations and RTC replay. Protocol/settings/Sheets/
+OTA sanitizer regressions also pass. Display5.5.5 and normal monitor6.0.3 builds
+pass with diagnostics disabled; normal binary remains0x175ff0.
+
+Second controlled abort (artifact2525c1cea1d96e07, app ELF prefix2f108a192)
+produced a COMPLETE UART dump with valid SDK checksum. verify_flight_dump.py
+read back all256 internal bytes, all256 PSRAM bytes, all4 stack markers, and173
+valid records including64 sleep records and wrapped/crash markers. Official
+esp-coredump decoding identifies flight_test on core0 and controlled_crash at
+flight_recorder_self_test.c:45. On reboot32 RTC records replayed, including the
+crash marker. This validates abort capture with readable memory, NOT every IWDT
+or cache-disabled failure. Allocated8-bit heap is captured, not raw unused2MiB.
+
+Final non-self-test image deployed OTA successfully; no crash task/test markers
+in ELF or boot. SHA256
+b1659beb1025bd55aca2b199538338f20c5744ed1b66b3f8b065d53d807bc858;
+ELF prefix28191e655; size1424704=0x15bd40,111296 bytes OTA headroom. Exact artifacts
+in .cache/watchdog-diagnostics/b1659beb1025bd55/, test ELF in2525c1cea1d96e07/.
+Postboot UART confirms real readings, PageKite AUTHENTICATED and one actual
+Sheets200/ok upload. No credentials/settings erased, no task stack reductions.
+
+Verified dump, decoded report, recorder JSON, raw UART and SHA metadata are
+local in .cache/watchdog-captures/2525c1cea1d96e07/ (private permissions). Raw
+memory can contain secrets: do not paste its arbitrary contents into tool output.
+The ongoing raw UART file was renamed on the same filesystem while preserving
+the open reader descriptor; /tmp/flue-flight-capture/serial.raw is a symlink to
+it. Reader script/status/control files remain in /tmp/flue-flight-capture/.
+Capture currently runs in exec session76652; a stop file in that directory stops
+it cleanly. This is USB capture, not a restarted twelve-hour network automation.
+
+## 2026-10-31 watchdog diagnostic build fits OTA with -Os, NOT flashed
+
+Owner requested building UART core dumps, a separate internal dump stack,
+stack-end watchpoint and light heap poisoning, and checking existing OTA fit.
+main explicitly depends on espcoredump (inert when disabled). The tracked
+sdkconfig.watchdog-diagnostics.defaults overlay is applied to a COPY of the
+normal active sdkconfig by tools/build_watchdog_diagnostics.sh. No normal config
+changes. UART dumps start automatically (delay0), include up to64 task snapshots,
+use a2048-byte dedicated internal stack and IDF Monitor info decoding. Full DRAM
+capture remains off; PSRAM heap is not included. Existing panic-in-IRAM/canary,
+800ms IWDT, light sleep, PSRAM-only allocators and task reservations are retained.
+
+Without size optimization the binary is0x1797d0=1546192 bytes:10192 bytes TOO BIG
+for either existing0x177000=1536000-byte OTA slot. The successful --size variant
+uses -Os with -ggdb retained, and includes all current working-tree PSRAM buffer
+changes. Build/watchdog-diagnostics-size binary is0x15a520=1418528 bytes, leaving
+117472 bytes (7.65%). SDK app size check passes. Partition-table binary matches
+normal build byte for byte. Generated sdkconfig confirms all diagnostic flags;
+ELF has debug_info and linked UART core-dump / heap-poisoning routines. These
+are build/integration checks, not hardware crash-capture or stability validation.
+
+Binary SHA256:80f0ae1dd9dd1a090311334ce33cff5b06629074b30b1b88a24f64045649b20a.
+Exact binary/ELF/map/sdkconfig/compile commands/partition table and SHA manifest
+are preserved together in .cache/watchdog-diagnostics/80f0ae1dd9dd1a09/.
+Use THAT ELF for a dump from THAT binary, not normal build/flue-monitor.elf.
+The normal ota_flash.sh still selects normal build/flue-monitor.bin, so explicit
+diagnostic artifact selection is required for any later authorized deployment.
+No device contacted, flashed, rebooted or deliberately crashed for this task.
+
+## 2026-10-31 sensors/Sheets/Bosch stack buffers reduced, NOT flashed
+
+Owner requested extending the PSRAM buffer work to these workers. Sensors'
+360-point graph history already uses strict PSRAM. Its zone classifier now
+obtains only the two thresholds through mutex-protected settings_get_zone_limits,
+eliminating the full settings copy without introducing a sensor allocation.
+Small regression arrays, I2C/ISR state and all task stacks remain internal.
+
+Sheets uses a single boot-lifetime strict-PSRAM workspace for its settings
+snapshot and576-byte URL. Initialization failure frees partial allocations;
+event submission returns false until the worker is ready. Queue/task creation
+failure is checked and retrying init is safe. HTTP client allocation failure
+returns without advancing the upload baseline. Bosch's1024-byte callback code
+and256-byte resource URLs now use strict buffer_memory allocations; callbacks
+wipe/free code on rejection and after form creation. Existing responses/tokens/
+forms remain in PSRAM. No credentials, settings or cloud resources changed.
+
+Compiler frame sizes (bytes) before/after this change: classify_zone832->64,
+log_to_sheets880->304, sheets_logger_task960->176, command1104->112,
+discover_zones288->32, poll_temperature304->48. These are not measured task
+peaks. Sheets' earlier6928-byte minimum was FREE space within its12288-byte
+reserved internal stack (estimated peak5360), not6928 bytes used. Stack
+reservations remain unchanged until runtime normal/error/reconnect paths are
+measured again.
+
+ASan/UBSan test_sheets_memory.py runs actual worker/upload/init and classifier:
+zone boundaries, PSRAM/queue/task/client allocation failures, complete periodic
+and event URLs, snapshot age/temperature, unchanged retry baseline on rejected
+or failed transport, and resource cleanup pass. Bosch sanitizer tests cover
+callback-code and URL exhaustion without network calls, valid code exchange
+and existing protocol/token lifecycle. Actual settings getter/validation tests
+also pass. Official6.0.3 build passes:0x175ff0,4112 bytes OTA headroom. Not flashed.
+
+## 2026-10-31 PageKite and HTTP local buffers moved to PSRAM, NOT flashed
+
+Owner requested moving large local PageKite buffers and the same for HTTP.
+PageKite allocates a single 6392-byte private workspace using psram_buffer,
+without internal fallback. DNS, authentication and session phases overlap in
+a union; simultaneously live receive/prepare/reject buffers are separate.
+Workspace allocation happens once before stack registration, with complete
+partial-startup cleanup. Reconnect/longjmp reuses it without allocating again.
+Challenge answers must be explicitly NUL-terminated after each append: the
+workspace is reused and is not zero-initialized like the previous local array.
+
+HTTP login bodies and settings GET/POST snapshots use buffer_memory with
+per-request ownership and cleanup on every exit. Existing JSON/body/history/
+asset/WS allocations retain their strict policy. Shared OTA's 1024-byte input
+buffer also uses buffer_memory, allocated before esp_ota_begin and released on
+all failures and before finalization/reboot. ESP-IDF 6.0.3 esp_flash_write stages
+non-DRAM input in a small internal buffer before disabling the cache; this
+does not permit external task stacks or cache-disabled code to access PSRAM.
+OTA now depends on captive_portal for buffer_memory. The display's build-time
+non-PSRAM policy still uses internal RAM; there is no runtime fallback.
+
+Compared with the preserved deployed ELF, compiler frame sizes in bytes:
+authenticate3920->224, auth_header_for1104->80, prepare2656->272,
+receive1616->592, session_loop2256->64, reply816->48,
+settings_post_handler1776->240, settings_get_handler816->32,
+auth_form_handler704->192, ota_post_handler1088->80.
+These are individual compiler frames, not measured task peaks. Reserved stack
+sizes remain unchanged; no internal heap saving from stack shrinking is claimed.
+
+ASan/UBSan PageKite tests cover all three startup allocation failures,
+dual-domain challenges after dirtying/reusing workspace, rejection/reconnect,
+existing routing/framing/queue tests and exact buffer capacities. Settings tests
+cover snapshot allocation failure without NVS writes and existing validation/
+redaction. test_http_psram_buffers.py checks fragmented login/OTA input,
+allocation/read/write/begin/end/boot failures, timeout retries and cleanup.
+PSA known vectors, strict TLS allocation and stack diagnostic tests pass.
+Monitor6.0.3 build passes:0x175df0 bytes,4624 bytes OTA headroom. No flash,
+reboot, device settings changes or runtime stability claim for these changes.
+Shared OTA compatibility also builds with display5.5.5 (0x10afb0 bytes,
+29% OTA headroom), using its existing Python3.14 environment. No display flash.
+
 ## 2026-10-31 six-task stack telemetry deployed
 
 Owner requested adding actual stack measurements. stack_diagnostics registers

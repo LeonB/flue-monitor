@@ -4,6 +4,7 @@
 #include "bosch_protocol.h"
 #include "dashboard_auth.h"
 #include "buffer_memory.h"
+#include "flight_recorder.h"
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -30,6 +31,8 @@
 #define TOKEN_MAX 8192
 #define REFRESH_MAX 4096
 #define AUTH_MAX 2304
+#define CODE_SIZE 1024
+#define RESOURCE_URL_SIZE 256
 
 static SemaphoreHandle_t lock;
 static QueueHandle_t jobs;
@@ -150,8 +153,10 @@ static cJSON *request(const char *url, const char *body, bool authorized) {
         esp_http_client_set_header(h,"Content-Type","application/x-www-form-urlencoded");
         esp_http_client_set_post_field(h,body,strlen(body));
     }
+    FLUE_TRACE(BOSCH_BEGIN,authorized);
     esp_err_t transport = esp_http_client_perform(h);
     http_status = esp_http_client_get_status_code(h);
+    FLUE_TRACE(BOSCH_END,transport==ESP_OK ? http_status : transport);
     if (r.overflow) strcpy(request_failure,"Response exceeds 24 KiB limit");
     else if (transport != ESP_OK)
         snprintf(request_failure,sizeof request_failure,"Network/TLS error 0x%x",(unsigned)transport);
@@ -279,8 +284,11 @@ static void discover_zones(void) {
     }
     if (now_s()<zones_next) return;
     zones_next=now_s()+600;
-    char url[256]; snprintf(url,sizeof url,API_ROOT "%s/resource/zones",device);
+    char *url=buffer_memory_alloc(RESOURCE_URL_SIZE);
+    if (!url) return;
+    snprintf(url,RESOURCE_URL_SIZE,API_ROOT "%s/resource/zones",device);
     cJSON *o=request(url,NULL,true);
+    free(url);
     cJSON *refs=cJSON_GetObjectItemCaseSensitive(o,"references");
     if (cJSON_IsArray(refs)) {
         xSemaphoreTake(lock,portMAX_DELAY); status.zone_count=0;
@@ -302,9 +310,12 @@ static bool poll_temperature(void) {
     request_stage="Thermostat discovery";
     if (!discover()) return false;
     discover_zones();
-    char url[256]; snprintf(url,sizeof url,API_ROOT "%s/resource/zones/%s/temperatureActual",device,zone);
+    char *url=buffer_memory_alloc(RESOURCE_URL_SIZE);
+    if (!url) { strcpy(request_failure,"Insufficient memory"); return false; }
+    snprintf(url,RESOURCE_URL_SIZE,API_ROOT "%s/resource/zones/%s/temperatureActual",device,zone);
     request_stage="Room temperature";
     cJSON *o=request(url,NULL,true);
+    free(url);
     if (!o) {
         if (http_status==401) { expiry=0; wipe_free(access_token); access_token=NULL; }
         if (http_status==403) reauth=true;
@@ -324,13 +335,18 @@ static void command(cJSON *o) {
     if (!strcmp(action,"start")) {
         if (!begin_login()) set_status("error","Could not create sign-in link.");
     } else if (!strcmp(action,"callback")) {
-        char code[1024];
-        if (now_s()>=auth_deadline || !bosch_callback(jstr(o,"callback"),oauth_state,code,sizeof code)) {
+        if (now_s()>=auth_deadline) {
+            set_status("login_error","Link expired or belongs to an earlier sign-in. Click Connect to Bosch and use the new return link."); return;
+        }
+        char *code=buffer_memory_calloc(CODE_SIZE,1);
+        if (!code) { set_status("error","Insufficient memory."); return; }
+        if (!bosch_callback(jstr(o,"callback"),oauth_state,code,CODE_SIZE)) {
+            wipe_free(code);
             set_status("login_error","Link expired or belongs to an earlier sign-in. Click Connect to Bosch and use the new return link."); return;
         }
         const char *pairs[]={"grant_type","authorization_code","code",code,"client_id",CLIENT_ID,
             "redirect_uri",BOSCH_REDIRECT,"code_verifier",verifier,"scope",SCOPES};
-        char *body=form(pairs,12); memset(code,0,sizeof code);
+        char *body=form(pairs,12); wipe_free(code);
         if (!body) { set_status("error","Insufficient memory."); return; }
         cJSON *tokens=request(TOKEN_URL,body,false); wipe_free(body);
         // A new authorization must supply its own refresh token, never reuse an

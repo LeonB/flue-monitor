@@ -103,6 +103,11 @@ int main(void) {
  assert(dashboard_auth_check_csrf(&remote));remote.origin="https://demo.pagekite.me.evil";assert(!dashboard_auth_check_csrf(&remote));
  remote.origin="ftp://demo.pagekite.me";assert(!dashboard_auth_check_csrf(&remote));remote.origin="http://demo.pagekite.me";assert(!dashboard_auth_check_csrf(&remote));
  remote.origin=NULL;assert(!dashboard_auth_check_csrf(&remote));assert(dashboard_auth_check_csrf(&local));
+ // The configured public hostname may be 127 characters long.
+ const char *saved_host=remote.host;char long_host[128],long_origin[160];
+ memset(long_host,'a',127);long_host[127]=0;long_host[63]='.';long_host[124]='.';long_host[125]='n';long_host[126]='l';
+ snprintf(long_origin,sizeof long_origin,"https://%s",long_host);remote.host=long_host;remote.origin=long_origin;
+ assert(dashboard_auth_check_csrf(&remote));remote.host=saved_host;remote.origin=NULL;
  now=86400LL*1000000;assert(dashboard_auth_check(&remote));remote.cookie=NULL;assert(!dashboard_auth_check(&remote));remote.cookie=valid;now=0;
  for(int i=0;i<5;i++)assert(dashboard_auth_login(&remote,"incorrect-password",false)==ESP_ERR_NOT_FOUND);
  assert(dashboard_auth_login(&remote,"test-password-123",false)==ESP_ERR_TIMEOUT);now+=30000001;

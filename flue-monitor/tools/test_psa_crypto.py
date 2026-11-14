@@ -17,7 +17,6 @@ parser.add_argument('--library', type=Path, required=True)
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 auth = (root / 'main/dashboard_auth.c').read_text()
-pagekite = (root / 'main/pagekite_tunnel.c').read_text()
 
 
 def section(source, start, end):
@@ -27,8 +26,6 @@ def section(source, start, end):
 
 salt = bytes(range(16))
 expected_hash = hashlib.pbkdf2_hmac('sha256', b'compatibility-test', salt, 12000).hex()
-expected_signature = '00010203' + hashlib.sha1(b'test-secrettest-payload00010203').hexdigest()[:28]
-expected_ddns = '00010203' + hashlib.sha1(b'test-secrettest.example:192.0.2.1' + b'00010203').hexdigest()
 source = '''
 #include <psa/crypto.h>
 #include <stdint.h>
@@ -38,33 +35,23 @@ source = '''
 #include <string.h>
 #include <assert.h>
 #define AUTH_PBKDF2_ROUNDS 12000
-#define SETTINGS_PAGEKITE_TEXT_MAX_LEN 128
-static const char *secret = "test-secret", *domain = "test.example";
-static void die(const char *message) {
-    fprintf(stderr, "%s", message);
-    exit(1);
-}
-static void esp_fill_random(void *buffer, size_t length) {
-    for (size_t i = 0; i < length; i++) ((unsigned char *)buffer)[i] = i;
+static void hex(const uint8_t *in,size_t n,char *out){
+    static const char digits[]="0123456789abcdef";
+    for(size_t i=0;i<n;i++){out[2*i]=digits[in[i]>>4];out[2*i+1]=digits[in[i]&15];}
+    out[2*n]=0;
 }
 '''
 source += section(auth, 'static bool derive(', 'static bool equal_secret(')
-source += section(pagekite, 'static void hex(', 'static void chunk(')
-source += section(pagekite, 'static void ddns_signature(', 'typedef struct { char body')
 source += f'''
 int main(void) {{
     assert(psa_crypto_init() == PSA_SUCCESS);
     uint8_t salt[16], output[32];
-    char hash[65], signature_out[37], dns[49];
+    char hash[65];
     for (int i = 0; i < 16; i++) salt[i] = i;
     assert(derive("compatibility-test", salt, output));
     hex(output, 32, hash);
     assert(!strcmp(hash, "{expected_hash}"));
-    signature("test-payload", signature_out);
-    assert(!strcmp(signature_out, "{expected_signature}"));
-    ddns_signature("192.0.2.1", dns);
-    assert(!strcmp(dns, "{expected_ddns}"));
-    puts("PASS actual TF-PSA crypto: unchanged PBKDF2 credential hash, relay and DDNS signatures");
+    puts("PASS actual TF-PSA crypto: unchanged PBKDF2 credential hash");
 }}
 '''
 with tempfile.TemporaryDirectory() as directory:
@@ -72,7 +59,7 @@ with tempfile.TemporaryDirectory() as directory:
     source_path.write_text(source)
     binary = Path(directory) / 'crypto-test'
     subprocess.run([
-        'cc', '-I' + str(args.source / 'include'),
+        'cc', '-I' + str(root / 'main'), '-I' + str(args.source / 'include'),
         '-I' + str(args.source / 'drivers/builtin/include'), str(source_path),
         str(args.library), '-o', str(binary),
     ], check=True)

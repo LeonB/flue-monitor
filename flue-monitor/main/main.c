@@ -25,6 +25,7 @@
 #include "esp_ota_ops.h"
 #include "mdns.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -33,7 +34,7 @@
 #include "ota_server.h"
 #include "rest_api.h"
 #include "bosch_client.h"
-#include "pagekite_tunnel.h"
+#include "cloudflare_tunnel.h"
 #include "memory_diagnostics.h"
 #include "stack_diagnostics.h"
 #include "secrets.h"
@@ -45,6 +46,7 @@
 #include "ws_server.h"
 #include "buffer_memory.h"
 #include "tls_memory.h"
+#include "flight_recorder.h"
 
 static const char *TAG = "main";
 
@@ -52,6 +54,7 @@ static const char *TAG = "main";
 // notifications onto the status LED -- see main() below. STATUS_LED_CONNECTING
 // doubles as "reconnecting," same color/meaning as the initial join attempt.
 static void wifi_status_changed(bool connected) {
+  FLUE_TRACE(WIFI,connected);
   status_led_set(connected ? STATUS_LED_CONNECTED : STATUS_LED_CONNECTING);
 }
 
@@ -66,7 +69,9 @@ static void sensor_log_task(void *arg) {
   unsigned diagnostic_ticks = 0;
   while (true) {
     sensor_reading_t reading;
+    FLUE_TRACE(SENSOR_BEGIN,0);
     sensors_read(&reading);
+    FLUE_TRACE(SENSOR_END,reading.thermocouple_ok);
 
     if (reading.thermocouple_ok) {
       ESP_LOGI(TAG, "MCP9601: thermocouple %.2f C, cold junction %.2f C, rate %.2f C/min, zone %s",
@@ -155,6 +160,7 @@ static void *json_internal_alloc(size_t size) {
 #endif
 
 void app_main(void) {
+  flight_recorder_init();
   stack_diagnostics_register(STACK_MAIN, CONFIG_ESP_MAIN_TASK_STACK_SIZE);
   ESP_ERROR_CHECK(tls_memory_init());
   // Install once before any application tasks/JSON allocations. All users
@@ -167,6 +173,16 @@ void app_main(void) {
 #endif
   cJSON_InitHooks(&json_hooks);
   init_nvs();
+  // One-time cleanup of the graph-only namespace introduced by the previous
+  // image. The Mac holds the exported snapshot; settings/credentials are separate.
+  nvs_handle_t legacy_graph;
+  if (nvs_open("graph_history", NVS_READONLY, &legacy_graph) == ESP_OK) {
+    nvs_close(legacy_graph);
+    if (nvs_open("graph_history", NVS_READWRITE, &legacy_graph) == ESP_OK) {
+      if (nvs_erase_all(legacy_graph) == ESP_OK) nvs_commit(legacy_graph);
+      nvs_close(legacy_graph);
+    }
+  }
   settings_init();
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -213,13 +229,15 @@ void app_main(void) {
 #if CONFIG_FLUE_DIAG_DISABLE_HTTP
     ESP_LOGW(TAG, "Diagnostic build: HTTP/WebSocket/OTA disabled; use USB for recovery");
 #else
+    cloudflare_tunnel_start();
     httpd_handle_t server = rest_api_start();
+    ota_server_set_history_hooks(rest_api_history_import, rest_api_history_export);
     ota_server_register(server, OTA_SECRET);
     ws_server_register(server);
     bosch_client_start(server);
 #endif
     sheets_logger_init();
-    pagekite_tunnel_start();
+    flight_recorder_test_start();
 
     int64_t next_stack_sample_us = 0;
     while (true) {
@@ -227,6 +245,8 @@ void app_main(void) {
       int64_t now_us = esp_timer_get_time();
       if (now_us >= next_stack_sample_us) {
         stack_diagnostics_sample();
+        FLUE_TRACE(INTERNAL_FREE,heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
+        FLUE_TRACE(PSRAM_FREE,heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
         next_stack_sample_us = now_us + 10000000;
       }
       vTaskDelay(pdMS_TO_TICKS(100));
