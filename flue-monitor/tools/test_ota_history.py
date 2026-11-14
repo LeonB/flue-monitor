@@ -5,6 +5,7 @@ import json
 import struct
 import tempfile
 import threading
+import copy
 import ota_with_history as ota
 
 
@@ -69,6 +70,11 @@ try:
         ota.time.sleep = lambda _: None
         out = ota.update(root, f'127.0.0.1:{server.server_port}', image)
         assert uploads == restores == 1
+        utc = json.loads((out/'history-before.json').read_text())
+        ota.validate_utc_history(utc)
+        assert utc['samples'][0]['timestamp'] == utc['captured_at'] - 100
+        assert utc['events'][0]['timestamp'] == utc['captured_at'] - 75
+        assert (out/'history-after.json').exists()
         assert ota.decode_history((out/'history-before.bin').read_bytes())['samples'] == ota.decode_history(before)['samples']
         assert ota.history_contains(ota.decode_history((out/'history-before.bin').read_bytes()), ota.decode_history((out/'history-after.bin').read_bytes()))
         assert json.loads((out/'verified.json').read_text())['samples_preserved'] == 2
@@ -94,6 +100,44 @@ finally:
     server.shutdown()
     server.server_close()
 print('PASS external backup/restore/read-back, plateau retention, failure diagnostics and no upload retry')
+
+# Absolute UTC records survive delayed and repeated restores without changing
+# their timestamps. The device's wall clock is never used for the conversion.
+utc = ota.history_to_utc(ota.decode_history(before))
+original = copy.deepcopy(utc)
+for delay in (0, 3600, 86400, 31536000):
+    restored = ota.decode_history(ota.utc_restore_payload(utc, now=utc['captured_at']+delay))
+    assert ota.history_to_utc(restored)['samples'] == original['samples']
+    assert ota.history_to_utc(restored)['events'] == original['events']
+    assert utc == original
+# The wire's firmware wall clock is ignored: Mac capture time is the anchor.
+old_clock = ota.time.time
+try:
+    ota.time.time = lambda: 1800000000
+    assert ota.history_to_utc(ota.decode_history(ota.stamp_history(blob([(100,20,0,1)],wall=42))))['samples'][0]['timestamp'] == 1799999900
+finally:
+    ota.time.time = old_clock
+for mutate in (
+    lambda b: b.update(version=99),
+    lambda b: b.update(captured_at=True),
+    lambda b: b.update(samples=[None]),
+    lambda b: b['samples'][0].update(timestamp=b['captured_at']+1),
+    lambda b: b['samples'][1].update(timestamp=b['samples'][0]['timestamp']-1),
+    lambda b: b['samples'][0].update(temperature_c=float('nan')),
+    lambda b: b['samples'][0].update(rate_c_per_min=float('inf')),
+    lambda b: b['samples'][0].update(zone=4),
+    lambda b: b['events'][0].update(event_id=-1),
+):
+    bad = copy.deepcopy(original);mutate(bad)
+    try: ota.utc_restore_payload(bad,now=1800000100);raise AssertionError('Invalid UTC backup accepted')
+    except ValueError: pass
+for now in (original['captured_at']-1, original['captured_at']+0x100000000):
+    try: ota.utc_restore_payload(original,now=now);raise AssertionError('Invalid clock/range accepted')
+    except ValueError: pass
+# Same-second taps are real records; one event must not satisfy two expected taps.
+twice = ota.decode_history(blob([],[(75,2),(75,2)]))
+assert not ota.history_contains(twice,ota.decode_history(blob([],[(75,2)])))
+print('PASS UTC timestamps across delayed/repeated restores, invalid data, clock rollback, range and duplicate events')
 
 # Verify the USB path stops before programming the wrong device/layout.
 from types import SimpleNamespace

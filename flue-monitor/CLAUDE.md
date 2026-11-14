@@ -1,5 +1,37 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-14 baseline committed; UTC Mac backup implemented locally
+
+User requested commit all changes, THEN start UTC timestamps. Baseline source,
+tests and Cloudflare experiment committed as00213ec (author/committer LeonB,
+not pushed). Excluded generated build-*, personal design-import/readings/resume/
+DNS-import files and private secrets. Original778a071 was amended solely to fix
+author/committer; use00213ec. UTC changes are subsequent, UNCOMMITTED.
+
+Mac tools/ota_with_history.py now writes canonical history-before.json and
+history-after.json: format flue-monitor-history, version1, captured_at Unix UTC
+seconds; each sample/event has explicit timestamp. Backup records never change
+during restoration. Relative6296B wire v2 remains firmware-compatible; at restore
+UTC records convert to current ages using Mac time, no device NTP. Raw bin files
+remain diagnostics. Script reads saved JSON back for actual restore. Explicit
+schema/range/finite/order checks before update; event verification now preserves
+multiplicity of genuine duplicate taps. No ESP32 source changes/flash for UTC.
+Legacy prepare_restore(binary) helper retained for earlier local tools/backups.
+README documents seconds precision and network/rounding uncertainty.
+
+Local test_ota_history.py passed: HTTP backup/restart/import/readback with JSON,
+delayed/repeated UTC conversion through1year, unchanged original timestamps,
+invalid data, backwards Mac clock, uint32 age overflow, duplicate event counts,
+USB identity/layout mocks. py_compile and git diff --check pass. Read-only real
+UTC capture at .cache/ota-history/20261114T003104181060Z/ had only2samples/0events:
+monitor had restarted again. Restored last verified full33point/3event snapshot
+plus new live data through RAM import; verified35points/3events under
+.cache/ota-history/20261114T003208192930Z/. JSON UTC backup saved there. WS then
+uptime407s, reset_reason1(power-on), sensorOK,4CF connections, Sheets success1.
+Cause of power-on reset not established; no evidence of watchdog. Do not claim
+history persists arbitrary power loss: it remains RAM-only, Mac handles flash.
+Original HTTP2 remaining assets/API task remains pending.
+
 ## 2026-11-14 recovery and OTA graph round-trip VERIFIED
 
 USB recovery installed e23c1a602272047f. Subsequent owner-approved identical OTA

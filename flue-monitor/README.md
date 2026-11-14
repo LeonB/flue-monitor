@@ -220,10 +220,17 @@ cp main/secrets.h.example main/secrets.h   # first time only -- fill in a real r
 machine that pushes updates.
 
 The monitor's OTA script first downloads graph samples and event annotations
-to `.cache/ota-history/<timestamp>/history-before.bin` on the Mac. After flashing
+to `.cache/ota-history/<timestamp>/history-before.json` on the Mac. Each sample
+and event has an absolute UTC Unix timestamp in seconds (`timestamp`), anchored
+to the Mac's capture time (`captured_at`). After flashing
 and restarting, it restores them to RAM and verifies them by reading them back.
 The backup and firmware copy remain on the Mac if an update fails. No graph
 snapshot is written to device NVS. A failed backup stops the script before upload.
+The saved UTC timestamps stay unchanged during restore. Relative ages are used
+only for transport to the existing firmware, whose sampling clock is monotonic;
+device NTP changes do not alter the Mac backup. Raw `.bin` captures are retained
+alongside the JSON for diagnostics. The capture-time mapping has approximately
+one-second rounding plus network-delay uncertainty; it is not subsecond timing.
 
 For an explicit image, or an update without a graph backup:
 

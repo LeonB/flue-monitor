@@ -4,6 +4,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import struct
@@ -53,6 +54,75 @@ def prepare_restore(blob):
     return bytes(result)
 
 
+def history_to_utc(snapshot):
+    """Convert a Mac-stamped transfer snapshot into the durable backup format."""
+    wall = snapshot['saved_at']
+    backup = {
+        'format': 'flue-monitor-history', 'version': 1, 'captured_at': wall,
+        'samples': [{'timestamp': wall-age, 'temperature_c': temp,
+                     'rate_c_per_min': rate, 'zone': zone}
+                    for age, temp, rate, zone in snapshot['samples']],
+        'events': [{'timestamp': wall-age, 'event_id': event}
+                   for age, event in snapshot['events']],
+    }
+    validate_utc_history(backup)
+    return backup
+
+
+def validate_utc_history(backup):
+    """Reject invalid backups before an upload or a RAM restore."""
+    if (not isinstance(backup, dict) or backup.get('format') != 'flue-monitor-history' or
+            type(backup.get('version')) is not int or backup['version'] != 1 or
+            type(backup.get('captured_at')) is not int or backup['captured_at'] <= 0):
+        raise ValueError('Unsupported UTC history backup')
+    for key, capacity in (('samples', 360), ('events', 64)):
+        entries = backup.get(key)
+        if not isinstance(entries, list) or len(entries) > capacity:
+            raise ValueError('Invalid history count')
+        previous = 0
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValueError('Invalid history record')
+            ts = entry.get('timestamp')
+            if type(ts) is not int or not previous <= ts <= backup['captured_at'] or ts <= 0:
+                raise ValueError('Invalid UTC timestamp order or range')
+            previous = ts
+            if key == 'samples':
+                temp, rate, zone = (entry.get(k) for k in ('temperature_c', 'rate_c_per_min', 'zone'))
+                if (type(temp) not in (int, float) or not math.isfinite(temp) or not -40 <= temp <= 600 or
+                        type(rate) not in (int, float) or not math.isfinite(rate) or abs(rate) > 3.402823466e38 or
+                        type(zone) is not int or zone not in (1, 2, 3)):
+                    raise ValueError('Invalid temperature sample')
+            elif type(entry.get('event_id')) is not int or not 0 <= entry['event_id'] <= 0xffffffff:
+                raise ValueError('Invalid event ID')
+
+
+def utc_restore_payload(backup, now=None):
+    """Encode UTC records for existing RAM-only firmware; never rewrite the backup."""
+    validate_utc_history(backup)
+    now = int(time.time()) if now is None else now
+    if type(now) is not int or not backup['captured_at'] <= now <= 0x7fffffffffffffff:
+        raise ValueError('Mac clock is earlier than the backup')
+    data = bytearray(6296)
+    struct.pack_into('<qIIII', data, 0, now, 2, len(backup['samples']), len(backup['events']), 0)
+    for key, offset, stride in (('samples', 24, 16), ('events', 5784, 8)):
+        for i, entry in enumerate(backup[key]):
+            age = now - entry['timestamp']
+            if not 0 <= age <= 0xffffffff:
+                raise ValueError('UTC timestamp is outside the device history range')
+            if key == 'samples':
+                struct.pack_into('<IffI', data, offset+i*stride, age, entry['temperature_c'],
+                                 entry['rate_c_per_min'], entry['zone'])
+            else:
+                struct.pack_into('<II', data, offset+i*stride, age, entry['event_id'])
+    return bytes(data)
+
+
+def save_utc_history(path, backup):
+    validate_utc_history(backup)
+    path.write_text(json.dumps(backup, indent=2, allow_nan=False) + '\n')
+
+
 def history_contains(before, after):
     for age, temp, rate, zone in before['samples']:
         epoch = before['saved_at'] - age
@@ -69,12 +139,16 @@ def history_contains(before, after):
         if not (left and right and all(abs(x[1]-temp) < .01 and abs(x[2]-rate) <= .051 and x[3] == zone
                                      for x in (left, right))):
             return False
+    unmatched = list(after['events'])
     for age, event in before['events']:
         epoch = before['saved_at'] - age
-        if not any(abs(after['saved_at']-a-epoch) <= 2 and ev == event for a, ev in after['events']):
+        match = next((i for i, (a, ev) in enumerate(unmatched)
+                      if abs(after['saved_at']-a-epoch) <= 2 and ev == event), None)
+        if match is None:
             if len(after['events']) == 64 and epoch < after['saved_at'] - after['events'][0][0]:
                 continue
             return False
+        unmatched.pop(match)
     return True
 
 
@@ -136,9 +210,10 @@ def update(project, host, image, without_history=False, usb_port=None, expected_
     snapshot = None
     if not without_history:
         snapshot = stamp_history(request('/ota/history'))
-        decode_history(snapshot)
+        backup = history_to_utc(decode_history(snapshot))
         (out / 'history-before.bin').write_bytes(snapshot)
-        print(f'Graph backup saved to {out / "history-before.bin"}', flush=True)
+        save_utc_history(out / 'history-before.json', backup)
+        print(f'UTC graph backup saved to {out / "history-before.json"}', flush=True)
     (out / 'upload.json').write_text(json.dumps(record, indent=2) + '\n')
     frozen_image = out / 'firmware.bin'
     frozen_image.write_bytes(data)
@@ -170,11 +245,15 @@ def update(project, host, image, without_history=False, usb_port=None, expected_
             time.sleep(2)
     else:
         raise RuntimeError(f'Monitor not ready ({last_error}); backup retained in {out}')
-    expected = decode_history(snapshot)
+    # Read the durable UTC file back: restore uses the saved records, not the
+    # relative ages in the raw diagnostic capture.
+    backup = json.loads((out / 'history-before.json').read_text())
+    expected = decode_history(utc_restore_payload(backup))
     if not history_contains(expected, decode_history(current)):
-        request('/ota/history', prepare_restore(snapshot))  # One restore, then independently read it back.
+        request('/ota/history', utc_restore_payload(backup))  # One restore, then independently read it back.
         current = stamp_history(request('/ota/history'))
     (out / 'history-after.bin').write_bytes(current)
+    save_utc_history(out / 'history-after.json', history_to_utc(decode_history(current)))
     if not history_contains(expected, decode_history(current)):
         raise RuntimeError(f'History verification failed; backup retained in {out}')
     (out / 'verified.json').write_text(json.dumps({'samples_preserved': len(expected['samples']),

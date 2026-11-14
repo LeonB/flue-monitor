@@ -19,7 +19,7 @@ HOST="$2"
 # which for both flue-monitor/ and flue-display/ matches their directory name.
 PROJECT_NAME="$(basename "$(cd "$PROJECT_DIR" && pwd)")"
 
-# The monitor preserves its graph externally as well as in device flash.
+# The monitor preserves its graph in a UTC backup on the Mac.
 if [ -f "$PROJECT_DIR/tools/ota_with_history.py" ]; then
   exec python3 "$PROJECT_DIR/tools/ota_with_history.py" "$PROJECT_DIR" "$HOST"
 fi
