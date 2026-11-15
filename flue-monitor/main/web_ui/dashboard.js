@@ -381,6 +381,7 @@ function app() {
     async fetchHistory() {
       if (historyRequest) return historyRequest;
       if (this.historyReceivedMs && Date.now()-this.historyReceivedMs<30000) return;
+      if (!this.history.samples.length) this.historyLoaded = false;
       historyRequest = (async () => {
         try {
           const res = await this.authorizedFetch('/api/history', { signal: AbortSignal.timeout(10000) });

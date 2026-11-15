@@ -20,6 +20,10 @@ class Plot {
       this.scales[key] = range;
       this.options.hooks.setScale.forEach(fn => fn(this, key));
     }
+    if (!this.ready) {
+      this.ready = true;
+      this.options.hooks.ready?.forEach(fn => fn(this));
+    }
   }
   batch(fn) { fn(this); this.commit(); }
   setData(data) { this.data = data; }
@@ -64,8 +68,10 @@ function graph() {
 }
 const history = { samples: [[20000,20], [8000,130], [0,140]] };
 const g = graph();
+assert.equal(g.chartReady, false, 'keep the loading state before drawing');
 g.update(history, {thermocouple_ok:false}, {zone_cold_max_c:125}, true, [], now*1000);
 flushCommits();
+assert.equal(g.chartReady, true, 'dismiss the loading state after the first draw');
 const p = plots.at(-1);
 assert.equal(p.scales.x.min, now-8900);
 p.setScale('x', {min:now-2000,max:now-1000});

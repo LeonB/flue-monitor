@@ -31,6 +31,7 @@ function burnGraph() {
   const rangeClock = (s) => new Date(s * 1000).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
   const clock = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return {
+    chartReady: false,
     visibleRange: '',
     init() {
       chartHost = this.$refs.plot;
@@ -84,6 +85,7 @@ function burnGraph() {
           ],
           series: [{}, { label: 'Temperature', stroke: text, width: 2.5, points: { show: false }, value: (u,v) => v == null ? '—' : `${v.toFixed(1)} °C` }],
           hooks: {
+            ready: [() => { this.chartReady = true; }],
             drawClear: [u => {
               const { ctx, bbox } = u;
               ctx.save(); ctx.beginPath(); ctx.rect(bbox.left,bbox.top,bbox.width,bbox.height); ctx.clip();

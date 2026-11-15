@@ -1,5 +1,25 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-15 graph loading animation DEPLOYED
+
+Owner requested visible feedback while history loads. Graph card now reserves
+its drawn height and displays the existing startup spinner plus Loading history
+until fetch completion AND uPlot ready (first draw). chartReady component flag
+set by ready hook; tooltip hidden until drawn. Empty/error states replace spinner,
+and a first-load retry resets historyLoaded while existing graphs remain visible
+on refresh. Existing reduced-motion rule applies; no new library or runtime task.
+
+Chrome real dashboard with temporary7s history delay confirmed loading spinner
+visually, successful graph reveal, and503 stopping spinner with existing retry
+message. Local preview /tmp/flue-graph-loading-preview.py port8882, prefetch
+suppressed only in preview; production prefetch retained. Node graph test checks
+ready lifecycle and existing auto-follow; asset/hash/cache tests pass. Build
+1511952B,24048B free; frozen source/ELF/map/bin/actual sdkconfig at
+.cache/graph-loading/98da9d2639d2bb25/. OTA succeeded; UTC backup and independent restore readback verified at
+.cache/ota-history/20261115T203646306966Z/. Not committed; preceding combined
+graph fix is3f68a1c.
+
+
 ## 2026-11-15 recent-session cooling tail now follows current time
 
 Owner clarified graph must reach current time even after the recent session has

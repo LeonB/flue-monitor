@@ -114,7 +114,10 @@ html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
   .event-btn:active { background: var(--color-accent-200); }
   .toast { position: fixed; left: 16px; right: 16px; bottom: 24px; z-index: 20; background: var(--color-text); color: var(--color-bg); padding: 14px 18px; border-radius: 999px; font-size: 14px; font-weight: 600; text-align: center; box-shadow: var(--shadow-lg); }
   .graph-screen { max-width: 460px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-height: 100vh; min-height: 100dvh; box-sizing: border-box; }
-  .graph-card { background: var(--color-surface); border-radius: 28px; padding: 14px 12px; }
+  .graph-card { position:relative; min-height:408px; background: var(--color-surface); border-radius: 28px; padding: 14px 12px; }
+  .graph-loading { position:absolute; inset:0; z-index:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:24px; border-radius:inherit; background:var(--color-surface); color:var(--color-neutral-700); }
+  .graph-loading .startup-spinner { border-color:var(--color-neutral-300); border-top-color:var(--color-accent-700); }
+  .graph-empty { min-height:380px; display:grid; place-items:center; padding:20px; text-align:center; }
   .status-pill { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 16px; border-radius: 999px; background: var(--color-surface); font-size: 14px; }
   .status-pill strong { font-family: var(--font-heading); font-size: 17px; font-weight: 400; }
   .status-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
@@ -307,11 +310,13 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
       </div>
       <h2 style="margin:0">Burn history</h2>
       <div class="text-muted" x-text="visibleRange"></div>
-      <div class="graph-card">
-        <div x-show="!historyLoaded" class="text-muted" style="padding:20px;text-align:center">Loading&hellip;</div>
-        <div x-show="historyLoaded && history.samples.length === 0" class="text-muted" style="padding:20px;text-align:center"><span x-text="historyError || 'No history yet.'"></span></div>
+      <div class="graph-card" :aria-busy="!historyLoaded || (history.samples.length > 0 && !chartReady)">
+        <div x-show="!historyLoaded || (history.samples.length > 0 && !chartReady)" class="graph-loading" role="status" aria-live="polite">
+          <span class="startup-spinner" aria-hidden="true"></span><span>Loading history&hellip;</span>
+        </div>
+        <div x-show="historyLoaded && history.samples.length === 0" class="text-muted graph-empty"><span x-text="historyError || 'No history yet.'"></span></div>
         <div x-show="historyLoaded && history.samples.length > 0" x-ref="plot" class="burn-plot"></div>
-        <div x-ref="tooltip" class="graph-readout">Move over the graph to inspect a reading</div>
+        <div x-show="chartReady" x-ref="tooltip" class="graph-readout">Move over the graph to inspect a reading</div>
       </div>
       <p class="text-muted graph-help">Drag or scroll to zoom; double-click to reset. On touch screens, pinch to zoom and drag to pan. History is sampled every 4 minutes; times use your browser's clock.</p>
     </div>
