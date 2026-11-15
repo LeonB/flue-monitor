@@ -13,18 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Flue Monitor">
 
-<!-- dashboard.css is byte-identical to ../../../components/captive_portal/styles.css
-     (both copies of the same design system, kept as separate embedded files
-     since ESP-IDF's EMBED_FILES collides on basename across components --
-     see CLAUDE.md's "EMBED_FILES collides on basename" section). The
-     Caprasimo/Figtree font files those tokens name are embedded and
-     self-served from here (below) rather than loaded from Google's CDN --
-     matching how alpinejs.min.js is already vendored, not CDN-loaded, and
-     meaning this page renders correctly with no outside internet access,
-     not just no build step. Kept out of the shared CSS file itself (rather
-     than @font-face rules living in dashboard.css/styles.css) since the
-     captive portal doesn't embed these font files and would otherwise 404
-     on them. -->
+<!-- Shared portal stylesheet; fonts are served locally by this dashboard. -->
 <link rel="apple-touch-startup-image" href="/startup.png?size=640x1136" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
 <link rel="apple-touch-startup-image" href="/startup.png?size=750x1334" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
 <link rel="apple-touch-startup-image" href="/startup.png?size=1242x2208" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
@@ -66,7 +55,7 @@ html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
      the address bar showing), so a page sized to exactly 100vh already
      extends below the visible fold before any content is added. 100dvh
      tracks the real, currently-visible viewport instead, which is what was
-     pushing "Log what you did"/"Last 24 hours" off-screen on a tall phone. */
+     pushing "Log a moment"/"Last 24 hours" off-screen on a tall phone. */
   body { margin: 0; padding: 0; min-height: 100vh; min-height: 100dvh; box-sizing: border-box; overflow-x: hidden; }
   .screen { max-width: 460px; margin: 0 auto; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; box-sizing: border-box; }
   .topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 0; }
@@ -109,9 +98,6 @@ html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
   .sheet-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 10; }
   .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 11; background: var(--color-bg); border-radius: 28px 28px 0 0; padding: 12px 16px 24px; box-shadow: var(--shadow-lg); max-height: 80vh; overflow-y: auto; }
   .sheet-handle { width: 40px; height: 5px; border-radius: 999px; background: var(--color-neutral-400); margin: 0 auto 14px; }
-  .event-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
-  .event-btn { height: 64px; border-radius: 20px; background: var(--color-surface); font-size: 15px; font-weight: 600; border: none; cursor: pointer; font-family: inherit; color: var(--color-text); }
-  .event-btn:active { background: var(--color-accent-200); }
   .toast { position: fixed; left: 16px; right: 16px; bottom: 24px; z-index: 20; background: var(--color-text); color: var(--color-bg); padding: 14px 18px; border-radius: 999px; font-size: 14px; font-weight: 600; text-align: center; box-shadow: var(--shadow-lg); }
   .graph-screen { max-width: 460px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-height: 100vh; min-height: 100dvh; box-sizing: border-box; }
   .graph-card { position:relative; min-height:408px; background: var(--color-surface); border-radius: 28px; padding: 14px 12px; }
@@ -165,6 +151,37 @@ html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
   .save-bar button { height: 44px; border-radius: 999px; border: none; font: inherit; font-weight: 600; cursor: pointer; padding: 0 18px; }
   .btn-revert { background: none; color: var(--color-bg); }
   .btn-save { background: var(--color-accent); color: var(--color-bg); font-size: 15px; }
+</style>
+<style>
+.moment-sheet {padding:12px 22px 20px;max-height:88dvh;box-sizing:border-box;}
+.moment-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;}
+.moment-eyebrow{margin:0 0 5px;font-size:10px;letter-spacing:.15em;font-weight:700;color:var(--color-neutral-700);}
+.moment-heading h3{font-size:29px;line-height:1.2;margin:0;}
+.moment-close{width:34px;height:34px;border-radius:50%;border:0;background:var(--color-surface);color:var(--color-neutral-700);font-family:inherit;font-size:25px;line-height:1;cursor:pointer;}
+.moment-intro{font-size:14px;color:var(--color-neutral-700);margin:10px 0 20px;}
+.moment-tabs{display:flex;padding:4px;background:#e6d9c2;border-radius:16px;gap:4px;}
+.moment-tabs button{flex:1;min-height:42px;border:0;background:transparent;border-radius:12px;font:600 14px Figtree,sans-serif;color:var(--color-neutral-700);cursor:pointer;transition:background .15s,color .15s;}
+.moment-tabs button.is-active{background:#fff9ee;color:var(--color-text);box-shadow:0 1px 4px #4e392013;}
+.moment-hint{font-size:12px;font-weight:600;color:var(--color-neutral-700);margin:20px 1px 10px;}
+.moment-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.moment-option{display:flex;align-items:center;gap:10px;text-align:left;min-height:82px;padding:15px 13px;border:1px solid transparent;border-radius:18px;background:var(--color-surface);color:var(--color-text);font-family:inherit;cursor:pointer;transition:background .15s,border-color .15s;}
+.moment-option:hover{background:#e8d4b5;border-color:#c9aa80;}
+.moment-option:focus-visible,.moment-tabs button:focus-visible,.moment-close:focus-visible{outline:2px solid #955d29;outline-offset:3px;}
+.moment-option:active{background:#e1c49d;}
+.moment-wide{grid-column:1/-1;min-height:72px;}
+.moment-symbol{display:flex;flex:0 0 26px;color:#956032;}
+.moment-symbol svg{width:26px;height:26px;}
+.moment-copy{display:flex;flex-direction:column;gap:5px;}
+.moment-label{font-size:14px;font-weight:650;line-height:1.25;}
+.moment-detail{font-size:11px;line-height:1.35;color:var(--color-neutral-700);font-weight:400;}
+.moment-add{width:20px;height:20px;margin-left:auto;color:#956032;flex-shrink:0;}
+.moment-status{align-items:flex-start;min-height:89px;}
+.moment-dot{width:9px;height:9px;border-radius:50%;margin-top:4px;flex:0 0 9px;}
+.dot-steady{background:#81915b;}.dot-roaring{background:#c16b3d;}.dot-embers{background:#a16549;box-shadow:0 0 0 3px #a1654915;}.dot-dying{background:#c29e68;}.dot-out{background:#a59b89;}.dot-off{background:transparent;box-shadow:inset 0 0 0 1.5px #a59b89;}
+.moment-footer{display:flex;align-items:center;justify-content:center;gap:7px;font-size:11px;color:var(--color-neutral-700);margin:20px 0 0;}
+.moment-live{width:5px;height:5px;background:#9c6c37;border-radius:50%;}
+@media(min-width:640px){.moment-sheet{left:50%;right:auto;bottom:24px;transform:translateX(-50%);width:440px;border-radius:30px;padding-bottom:23px;}.moment-sheet .sheet-handle{margin-bottom:17px;}}
+@media(prefers-reduced-motion:reduce){.moment-option,.moment-tabs button{transition:none;}}
 </style>
 </head>
 <body x-data="app()">
@@ -259,9 +276,9 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
       </div>
 
       <div class="actions">
-        <button class="btn btn-primary btn-block" style="height:60px;font-size:17px;gap:10px" @click="openSheet()">
+        <button id="event-log-open" class="btn btn-primary btn-block" style="height:60px;font-size:17px;gap:10px" @click="openSheet()">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
-          Log what you did
+          Log a moment
         </button>
       </div>
 
@@ -271,20 +288,37 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
     </div>
   </template>
 
-  <!-- Event-log bottom sheet -->
+  <!-- Manual actions and observed fire states share the existing event log. -->
   <template x-if="sheetOpen">
-    <div>
-      <div class="sheet-backdrop" @click="sheetOpen = false"></div>
-      <div class="sheet">
+    <div @keydown.escape.window="closeSheet()">
+      <div class="sheet-backdrop" @click="closeSheet()"></div>
+      <section class="sheet moment-sheet" role="dialog" aria-modal="true" aria-labelledby="moment-title">
         <div class="sheet-handle"></div>
-        <h3 style="margin:0 0 2px">What just happened?</h3>
-        <p class="text-muted" style="margin:0;font-size:13px" x-show="reading.thermocouple_ok" x-text="'at ' + Math.round(reading.thermocouple_c) + '°C'"></p>
-        <div class="event-grid">
-          <template x-for="ev in events" :key="ev.slug">
-            <button class="event-btn" @click="logEvent(ev)" x-text="ev.label"></button>
+        <header class="moment-heading">
+          <div><p class="moment-eyebrow">BURN LOG</p><h3 id="moment-title">Log a moment</h3></div>
+          <button class="moment-close" @click="closeSheet()" aria-label="Close log">×</button>
+        </header>
+        <p class="moment-intro">What changed around the stove?</p>
+        <div class="moment-tabs" role="tablist" aria-label="Type of moment"
+             @keydown.arrow-right.prevent="setLogTab(logTab==='actions'?'status':'actions')"
+             @keydown.arrow-left.prevent="setLogTab(logTab==='actions'?'status':'actions')"
+             @keydown.home.prevent="setLogTab('actions')" @keydown.end.prevent="setLogTab('status')">
+          <button id="moment-tab-actions" role="tab" aria-controls="moment-options" :tabindex="logTab==='actions'?0:-1" :aria-selected="logTab==='actions'" :class="{'is-active':logTab==='actions'}" @click="setLogTab('actions')">Actions</button>
+          <button id="moment-tab-status" role="tab" aria-controls="moment-options" :tabindex="logTab==='status'?0:-1" :aria-selected="logTab==='status'" :class="{'is-active':logTab==='status'}" @click="setLogTab('status')">Fire status</button>
+        </div>
+        <p class="moment-hint" x-text="logTab==='actions' ? 'Something you did' : 'What the fire looks like'"></p>
+        <div class="moment-grid" :class="{'status-grid':logTab==='status'}" id="moment-options" role="tabpanel" :aria-labelledby="'moment-tab-'+logTab">
+          <template x-for="ev in eventOptions(logTab)" :key="ev.slug">
+            <button class="moment-option" :class="[ev.slug==='cold_start'?'moment-wide':'',logTab==='status'?'moment-status':'']" @click="logEvent(ev)">
+              <span class="moment-symbol" x-show="logTab==='actions'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="ev.path"></path></svg></span>
+              <span class="moment-dot" x-show="logTab==='status'" :class="'dot-'+ev.symbol"></span>
+              <span class="moment-copy"><span class="moment-label" x-text="ev.title"></span><span class="moment-detail" x-text="ev.detail"></span></span>
+              <svg class="moment-add" x-show="ev.slug==='cold_start'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 4v12M4 10h12"/></svg>
+            </button>
           </template>
         </div>
-      </div>
+        <p class="moment-footer"><span class="moment-live"></span><span x-text="(reading.thermocouple_ok?Math.round(reading.thermocouple_c)+'°C · ':'')+'Add to your burn history'"></span></p>
+      </section>
     </div>
   </template>
 

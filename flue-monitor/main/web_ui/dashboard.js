@@ -83,6 +83,85 @@ function ratePulsePeriodMs(rateCPerMin, fastRiseCPerMin, idlePeriodMs, fastPerio
   return lerp(idlePeriodMs, fastPeriodMs, t);
 }
 
+// Display order is independent of the append-only device event IDs.
+const LOG_GROUPS = {
+  "actions": [
+    {
+      "slug": "cold_start",
+      "title": "Cold start",
+      "detail": "Light a new fire",
+      "symbol": "flame",
+      "path": "M12 3c1 5 6 5 6 11a6 6 0 0 1-12 0c0-3 2-5 3-6 0 3 2 3 2 5 2-3 1-6 1-10Z"
+    },
+    {
+      "slug": "added_wood",
+      "title": "Added wood",
+      "detail": "Put fresh logs on the fire",
+      "symbol": "wood",
+      "path": "m5 8 12 7M7 5l12 7M4 12l10 6M5 8l2-3m10 10 2-3M4 12l-1 4 11 6 3-4"
+    },
+    {
+      "slug": "opened_stove",
+      "title": "Opened stove",
+      "detail": "Opened the stove door",
+      "symbol": "door",
+      "path": "M5 3h14v18H5zM9 3v18m5-10v2"
+    },
+    {
+      "slug": "damper_up",
+      "title": "Damper up",
+      "detail": "Increased the airflow",
+      "symbol": "up",
+      "path": "M5 18h14M12 16V4m-5 5 5-5 5 5"
+    },
+    {
+      "slug": "damper_down",
+      "title": "Damper down",
+      "detail": "Reduced the airflow",
+      "symbol": "down",
+      "path": "M5 18h14M12 4v11m-5-5 5 5 5-5"
+    }
+  ],
+  "status": [
+    {
+      "slug": "burning_optimally",
+      "title": "Burning steadily",
+      "detail": "An even, settled flame",
+      "symbol": "steady"
+    },
+    {
+      "slug": "roaring",
+      "title": "Roaring",
+      "detail": "Strong, vigorous flames",
+      "symbol": "roaring"
+    },
+    {
+      "slug": "coaling",
+      "title": "Coaling",
+      "detail": "Glowing embers, little flame",
+      "symbol": "embers"
+    },
+    {
+      "slug": "dying_down",
+      "title": "Dying down",
+      "detail": "Flames are getting smaller",
+      "symbol": "dying"
+    },
+    {
+      "slug": "fire_out",
+      "title": "Fire out",
+      "detail": "No flame or glowing embers",
+      "symbol": "out"
+    },
+    {
+      "slug": "stove_off",
+      "title": "Stove off",
+      "detail": "Stove no longer in use",
+      "symbol": "off"
+    }
+  ]
+};
+
 function app() {
   let historyRequest = null;
   return {
@@ -90,6 +169,7 @@ function app() {
     WIFI_DEVICES: [{ key: 'monitor', label: 'Monitor' }, { key: 'display', label: 'Display' }],
     deviceWifi: {},
     sheetOpen: false,
+    logTab: 'actions',
     themeMenuOpen: false,
     ZONE_THEMES,
     ZONE_ORDER,
@@ -388,10 +468,32 @@ function app() {
       return historyRequest;
     },
 
-    openSheet() { this.sheetOpen = true; },
+    eventOptions(group) {
+      return LOG_GROUPS[group].flatMap(option => {
+        const event = this.events.find(event => event.slug === option.slug);
+        return event ? [{ ...event, ...option }] : [];
+      });
+    },
+
+    setLogTab(group) {
+      this.logTab = group;
+      this.$nextTick(() => document.getElementById('moment-tab-' + group)?.focus());
+    },
+
+    openSheet() {
+      this.logTab = 'actions';
+      this.sheetOpen = true;
+      if (!this.events.length) this.fetchEvents();
+      this.$nextTick(() => document.getElementById('moment-tab-actions')?.focus());
+    },
+
+    closeSheet() {
+      this.sheetOpen = false;
+      this.$nextTick(() => document.getElementById('event-log-open')?.focus());
+    },
 
     async logEvent(ev) {
-      this.sheetOpen = false;
+      this.closeSheet();
       try {
         const res = await this.authorizedFetch('/api/event', {
           method: 'POST',
@@ -412,9 +514,9 @@ function app() {
         // already succeeded (see REVIEW.md finding #5/C5/D3).
         const data = await res.json().catch(() => ({}));
         this.historyReceivedMs = 0; // A new event invalidates prefetched history.
-        this.showToast(data.sheets_queued === false ? 'Logged: ' + ev.label + ' (not sent to Sheets)' : 'Logged: ' + ev.label);
+        this.showToast(data.sheets_queued === false ? 'Logged: ' + (ev.title || ev.label) + ' (not sent to Sheets)' : 'Logged: ' + (ev.title || ev.label));
       } catch (e) {
-        this.showToast("Couldn't log " + ev.label + ' -- check the connection');
+        this.showToast("Couldn't log " + (ev.title || ev.label) + ' -- check the connection');
       }
     },
 

@@ -1,5 +1,6 @@
 """Run the actual history response with a full ring and PSRAM allocator hooks."""
 import json
+from web_test_shim import native_source
 from pathlib import Path
 import subprocess
 import tempfile
@@ -9,7 +10,7 @@ idf = Path(json.loads((root / 'build/project_description.json').read_text())['id
 cjson = root / 'managed_components/espressif__cjson/cJSON'
 if not cjson.exists():
     cjson = idf / 'components/json/cJSON'
-api = (root / 'main/rest_api.c').read_text()
+api = native_source((root / 'main/rest_api.c').read_text())
 handler = api[api.index('static esp_err_t history_get_handler('):api.index('static const httpd_uri_t history_get_uri')]
 sensors_header = (root / 'main/sensors.h').read_text().replace('#pragma once', '').replace('#include "esp_err.h"', '')
 events = api[api.index('#define EVENT_LOG_CAPACITY'):api.index('static void event_log_push')]

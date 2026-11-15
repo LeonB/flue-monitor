@@ -734,7 +734,7 @@ static const web_route_t settings_post_uri = {
 };
 
 
-// The fixed woodstove-event taxonomy, ported verbatim from the original
+// The append-only woodstove-event taxonomy, starting with the original
 // ESPHome sidecar's own template buttons (same slugs, so any future
 // analysis joining against old Sheets data doesn't need a mapping table).
 // A closed set rather than free-text event labels, deliberately: this is
@@ -758,6 +758,7 @@ static const woodstove_event_t EVENTS[] = {
     {"dying_down", "Dying Down"},
     {"fire_out", "Fire Out"},
     {"stove_off", "Stove Off"},
+    {"coaling", "Coaling"}, // Append only: array indexes are saved event IDs.
 };
 #define EVENT_COUNT (sizeof(EVENTS) / sizeof(EVENTS[0]))
 

@@ -45,6 +45,7 @@ EVENTS = [
     {"slug": "dying_down", "label": "Dying Down"},
     {"slug": "fire_out", "label": "Fire Out"},
     {"slug": "stove_off", "label": "Stove Off"},
+    {"slug": "coaling", "label": "Coaling"},
 ]
 EVENT_LABEL = {e["slug"]: e["label"] for e in EVENTS}
 

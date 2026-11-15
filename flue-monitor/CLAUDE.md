@@ -1,5 +1,41 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-15 grouped burn log and Coaling DEPLOYED
+
+Owner approved the local design and explicitly requested implementation+OTA.
+Dashboard Log a moment now separates Actions (five entries) and Fire status
+(six entries) in the approved warm bottom-sheet layout. New status Coaling:
+glowing embers, little flame. No extra statuses added. Presentation order and
+short labels are UI-only: original API/Sheets slugs and labels retained.
+Coaling appended to EVENTS as index10, preserving all original0..9 snapshot
+IDs. Fire-status observations remain manual annotations, without changing
+sensor classification, burn detection, settings, LED behaviour or stack sizes.
+Icons use fixed local SVG paths (no HTML from API); tab arrow/Home/End handling,
+initial focus, Escape close and opener-focus restore verified locally.
+
+Node test_event_log.js covers exact stable taxonomy IDs,5/6 groups, old-device
+capability filtering, canonical coaling POST, queue-full feedback, failure,
+focus behaviour and unchanged readings/settings. ASan history snapshot test
+now roundtrips coaling index10 in unchanged6296B format. Existing history-memory
+fixture corrected to use the established native adapter shim (it predated9bed160).
+Nine targeted test programs pass, including HTTP2/identity/gzip, asset versions,
+UTC OTA backup, full history, graph follow and display settings acknowledgement.
+Local Chrome actual implementation verified selecting Coaling/toast and keyboard
+navigation, with synthetic data only. Local preview now ordinary mock_server
+port8886 (session99010), replacing the temporary prototype server.
+
+IDF6.0.3 build1515712B;20288B OTA free. Exact image SHA256
+3759ff55ad2cf97bd5353e6f8db21529db7b6bd9cb4852debb032be3a3739d1c.
+Frozen bin/ELF/map/actual sdkconfig/source/build+test logs:
+.cache/burn-log/3759ff55ad2cf97b/. OTA to monitor192.168.1.137 succeeded;
+Mac UTC backup and independent restore readback preserved360samples/14events:
+.cache/ota-history/20261115T223547735173Z/. All redacted settings unchanged
+apart from boot-randomized revision. Chrome owner-authorized login after OTA
+works; production Actions5 and Fire status6 including Coaling confirmed.
+No fake event logged on production. No display flash, USB open or watchdog
+monitoring restart. Owner requested committing the change; nothing pushed.
+
+
 ## 2026-11-15 audit cleanup and retired tunnel removal DEPLOYED
 
 Owner approved the audit's small simplifications and explicitly requested all

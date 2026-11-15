@@ -64,6 +64,18 @@ int main(void){
  clear_ram();history_sample_t many[360];for(unsigned i=0;i<360;i++)many[i]=(history_sample_t){i,100+(i%100),0,1};
  for(unsigned i=300;i<400;i++)history_push((history_sample_t){i,100+(i%100),0,1});
  assert(sensors_merge_history(many,360,400)==ESP_OK);n=sensors_get_history(result,360);assert(n==360 && result[0].uptime_s==40 && result[359].uptime_s==399);
+ // New event appends without reinterpreting old snapshot IDs or wire layout.
+ const char *original[]={"cold_start","opened_stove","added_wood","damper_up","damper_down",
+   "burning_optimally","roaring","dying_down","fire_out","stove_off"};
+ assert(EVENT_COUNT==11);
+ for(unsigned i=0;i<10;i++)assert(!strcmp(EVENTS[i].slug,original[i]));
+ clear_ram();uptime=500;const char*coaling=event_slug_canonical("coaling");assert(coaling==EVENTS[10].slug);
+ event_log_push(coaling);assert(rest_api_history_export(&before,&size)==ESP_OK);
+ assert(before.event_count==1&&before.events[0].event_id==10&&size==6296);
+ clear_ram();uptime=5;before.elapsed_s=30;
+ assert(rest_api_history_import((const char*)&before,sizeof before)==ESP_OK);
+ assert(s_event_log_count==1&&s_event_log[0].slug==coaling);
+ assert(rest_api_history_export(&after,&size)==ESP_OK&&after.events[0].event_id==10);
  free(s_history);puts("PASS RAM export/import, Mac elapsed time without NTP, reboot/fresh merge, repeated restore, duplicate taps, bounded ring, invalid input and allocation failure");
 }
 '''

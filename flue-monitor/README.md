@@ -371,8 +371,11 @@ curl -X POST http://flue-monitor.local/api/event \
 
 `POST /api/event` logs an immediate, un-gated Sheets row (see "Google Sheets
 logging" below) for one of the fixed event slugs `GET /api/events` lists --
-an unknown slug gets a `400`. No web UI exists yet to tap these from a
-phone at the stove (Milestone 6); for now this needs a raw HTTP client.
+an unknown slug gets a `400`. Use **Log a moment** on the dashboard: **Actions**
+records something you did; **Fire status** records what the fire looks like.
+The six statuses include **Coaling** (glowing embers with little flame), stored
+as `coaling`. These are manual observations, separate from temperature-based
+zones. Existing event slugs and saved IDs stay unchanged; new IDs append.
 
 ## WebSocket broadcast (once connected to WiFi)
 
