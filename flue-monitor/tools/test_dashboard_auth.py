@@ -27,6 +27,7 @@ typedef int esp_err_t;
 #define ESP_ERR_INVALID_ARG 1
 #define ESP_ERR_NOT_FOUND 2
 #define ESP_ERR_TIMEOUT 3
+#define ESP_ERR_INVALID_STATE 4
 #define NVS_READONLY 0
 #define NVS_READWRITE 1
 #define MBEDTLS_MD_SHA256 1
@@ -44,7 +45,7 @@ static void save_cookie(const httpd_req_t *req, char out[80]) {
  size_t n=strcspn(req->set_cookie,";");assert(n<80);memcpy(out,req->set_cookie,n);out[n]=0;
 }
 static bool any_session(void) {
- for(size_t i=0;i<AUTH_MAX_SESSIONS;i++)if(s_sessions[i].token[0])return true;
+ for(size_t i=0;i<AUTH_MAX_SESSIONS;i++)if(session_present(&s_sessions[i]))return true;
  return false;
 }
 int main(void) {
@@ -86,8 +87,8 @@ int main(void) {
  assert(dashboard_auth_login(&local,"next-password-123",true)==ESP_OK);
  save_cookie(&local,remembered);local.cookie=remembered;
  now=1000LL*86400*1000000;assert(dashboard_auth_check(&local));
- assert(strstr(local.set_cookie,"Max-Age=34560000"));
- dashboard_auth_init();assert(!dashboard_auth_check(&local));
+ assert(strstr(local.set_cookie,"Max-Age=7776000"));
+ dashboard_auth_init();assert(dashboard_auth_check(&local));
  assert(dashboard_auth_login(&local,"next-password-123",true)==ESP_OK);save_cookie(&local,remembered);
  assert(dashboard_auth_set_password("next-password-123","final-password-123")==ESP_OK);assert(!dashboard_auth_check(&local));
  assert(dashboard_auth_set_password("final-password-123","next-password-123")==ESP_OK);
@@ -106,7 +107,8 @@ int main(void) {
  assert(dashboard_auth_login(&remote,"next-password-123",false)==ESP_OK);
  save_cookie(&remote,phone);remote.cookie=phone;
  assert(strcmp(desktop,phone));assert(dashboard_auth_check(&local));
- assert(strstr(local.set_cookie,"Max-Age=34560000"));
+ assert(!strcmp(local.cookie,desktop)); // Validation never refreshes the cookie.
+
  remote.set_cookie=NULL;assert(dashboard_auth_check(&remote));assert(remote.set_cookie==NULL);
  // Re-login rotates the phone token without consuming another slot or logging out desktop.
  assert(dashboard_auth_login(&remote,"next-password-123",false)==ESP_OK);
@@ -115,13 +117,14 @@ int main(void) {
  dashboard_auth_logout(&remote);assert(!dashboard_auth_check(&remote));assert(dashboard_auth_check(&local));
  // Unknown logout must not clear a valid session.
  remote.cookie="flu_session=invalid";dashboard_auth_logout(&remote);assert(dashboard_auth_check(&local));
- // A password change and restart each revoke every session.
+ // A password change revokes all sessions; restart preserves only remembered ones.
  remote.cookie=NULL;assert(dashboard_auth_login(&remote,"next-password-123",true)==ESP_OK);save_cookie(&remote,phone);remote.cookie=phone;
  assert(dashboard_auth_set_password("next-password-123","final-password-123")==ESP_OK);
  assert(!dashboard_auth_check(&local) && !dashboard_auth_check(&remote));
  assert(dashboard_auth_login(&local,"final-password-123",true)==ESP_OK);save_cookie(&local,desktop);
  remote.cookie=NULL;assert(dashboard_auth_login(&remote,"final-password-123",false)==ESP_OK);save_cookie(&remote,phone);
- dashboard_auth_init();assert(!dashboard_auth_check(&local) && !dashboard_auth_check(&remote));
+ dashboard_auth_init();assert(dashboard_auth_check(&local) && !dashboard_auth_check(&remote));
+ assert(dashboard_auth_logout(&local)==ESP_OK);
  // Bounded capacity evicts only the least recently used session.
  char cookies[AUTH_MAX_SESSIONS+1][80];
  for(size_t i=0;i<AUTH_MAX_SESSIONS;i++) {
@@ -134,7 +137,65 @@ int main(void) {
  // Re-login at full capacity must not evict another browser.
  local.cookie=cookies[0];assert(dashboard_auth_login(&local,"final-password-123",true)==ESP_OK);save_cookie(&local,cookies[0]);
  for(size_t i=0;i<=AUTH_MAX_SESSIONS;i++){local.cookie=cookies[i];assert(dashboard_auth_check(&local)==(i!=1));}
- puts("PASS independent desktop/phone sessions, per-session remember/logout, token rotation, password/restart revocation and bounded LRU eviction");
+ // Only hashes, not raw browser cookies, reach durable storage.
+ assert(session_blob_size==sizeof(saved_sessions_t)&&session_blob_size<1024);
+ assert(memmem(session_blob,session_blob_size,cookies[0]+12,64)==NULL);
+ // Ordinary authenticated requests neither renew the cookie nor write NVS.
+ unsigned saved_writes=session_writes;local.cookie=cookies[0];local.set_cookie=NULL;
+ for(int i=0;i<100;i++)assert(dashboard_auth_check(&local));
+ assert(session_writes==saved_writes&&local.set_cookie==NULL);
+ // The same cookie works after a restart, but expires after a fixed90days.
+ dashboard_auth_init();assert(dashboard_auth_check(&local));
+ time_t issued=wall_now;wall_now+=AUTH_COOKIE_SECONDS-1;assert(dashboard_auth_check(&local));
+ wall_now++;assert(!dashboard_auth_check(&local));dashboard_auth_init();assert(!dashboard_auth_check(&local));
+ wall_now=issued;
+ // Boot before clock sync fails closed, without destroying the stored token.
+ wall_now=0;dashboard_auth_init();assert(!dashboard_auth_check(&local));
+ assert(dashboard_auth_login(&local,"final-password-123",true)==ESP_ERR_INVALID_STATE);
+ wall_now=issued;assert(dashboard_auth_check(&local));
+ // A failed persistent mutation must not report success or issue a cookie.
+ char active[80];memcpy(active,cookies[0],sizeof active);local.cookie=active;
+ for(int failure=0;failure<3;failure++) {
+  fail_nvs=failure==0;fail_nvs_set=failure==1;fail_nvs_commit=failure==2;
+  local.set_cookie=NULL;
+  assert(dashboard_auth_login(&local,"final-password-123",true)!=ESP_OK);
+  assert(local.set_cookie==NULL&&dashboard_auth_check(&local));
+  assert(dashboard_auth_logout(&local)!=ESP_OK&&dashboard_auth_check(&local));
+  fail_nvs=fail_nvs_set=fail_nvs_commit=false;
+  dashboard_auth_init();assert(dashboard_auth_check(&local));
+ }
+ assert(dashboard_auth_logout(&local)==ESP_OK);dashboard_auth_init();assert(!dashboard_auth_check(&local));
+ // Re-login from remembered to transient removes the durable token too.
+ local.cookie=NULL;assert(dashboard_auth_login(&local,"final-password-123",true)==ESP_OK);save_cookie(&local,active);local.cookie=active;
+ assert(dashboard_auth_login(&local,"final-password-123",false)==ESP_OK);save_cookie(&local,active);
+ assert(dashboard_auth_check(&local));dashboard_auth_init();assert(!dashboard_auth_check(&local));
+ // A password change invalidates even a snapshot left on disk at power loss.
+ local.cookie=NULL;assert(dashboard_auth_login(&local,"final-password-123",true)==ESP_OK);save_cookie(&local,active);local.cookie=active;
+ assert(dashboard_auth_set_password("final-password-123","another-password")==ESP_OK);
+ dashboard_auth_init();assert(!dashboard_auth_check(&local));
+ // Corruption/version mismatch is never accepted as a valid session store.
+ local.cookie=NULL;assert(dashboard_auth_login(&local,"another-password",true)==ESP_OK);save_cookie(&local,active);local.cookie=active;
+ session_blob_size--;dashboard_auth_init();assert(!dashboard_auth_check(&local));
+ session_blob_size++;session_blob[0]=99;dashboard_auth_init();assert(!dashboard_auth_check(&local));
+ // Token hash failure cannot create a session or accept an existing cookie.
+ fail_token_hash=true;assert(dashboard_auth_login(&local,"another-password",true)==ESP_FAIL);assert(!dashboard_auth_check(&local));fail_token_hash=false;
+ // All eight remembered slots persist at fixed size. A ninth replaces one.
+ assert(dashboard_auth_set_password("another-password","bounded-password")==ESP_OK);
+ char durable[AUTH_MAX_SESSIONS+1][80];
+ for(size_t i=0;i<AUTH_MAX_SESSIONS;i++) {
+  local.cookie=NULL;now+=1000000;
+  assert(dashboard_auth_login(&local,"bounded-password",true)==ESP_OK);save_cookie(&local,durable[i]);
+  assert(session_blob_size==sizeof(saved_sessions_t));
+ }
+ dashboard_auth_init();
+ for(size_t i=0;i<AUTH_MAX_SESSIONS;i++){local.cookie=durable[i];assert(dashboard_auth_check(&local));}
+ now+=1000000;local.cookie=durable[0];assert(dashboard_auth_check(&local));
+ local.cookie=NULL;now+=1000000;
+ assert(dashboard_auth_login(&local,"bounded-password",true)==ESP_OK);save_cookie(&local,durable[AUTH_MAX_SESSIONS]);
+ dashboard_auth_init();
+ for(size_t i=0;i<=AUTH_MAX_SESSIONS;i++){local.cookie=durable[i];assert(dashboard_auth_check(&local)==(i!=1));}
+ puts("PASS persistent hashed sessions, fixed expiry, reboot, clock sync, durable logout/rotation/password revocation, corruption, NVS failure and zero per-request writes");
+ puts("PASS independent desktop/phone sessions, per-session remember/logout, token rotation, password revocation and remembered restart survival and bounded LRU eviction");
  puts("PASS password hashing/persistence, crypto/NVS failure, socket-based remote detection, cookie boundaries, browser-session versus persistent cookies, CSRF/HTTPS, lockout, password change and logout");
  return 0;
 }

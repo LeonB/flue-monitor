@@ -1,7 +1,17 @@
+#include <time.h>
+#include <CommonCrypto/CommonDigest.h>
+static time_t wall_now = 1794780000;
+static time_t auth_host_time(time_t *out) {if(out)*out=wall_now;return wall_now;}
+#define time auth_host_time
 static int64_t now;
 static unsigned char blob[256];
 static size_t blob_size;
-static bool fail_hash, fail_nvs;
+static bool fail_hash, fail_nvs, fail_token_hash, fail_nvs_set, fail_nvs_commit;
+static unsigned char session_blob[1024], pending_blob[1024];
+static size_t session_blob_size, pending_size;
+static bool pending_sessions;
+static unsigned session_writes;
+
 static int64_t esp_timer_get_time(void) {return now;}
 static void esp_fill_random(void *out,size_t n) {arc4random_buf(out,n);}
 typedef int psa_status_t;
@@ -24,7 +34,23 @@ static int psa_key_derivation_output_bytes(psa_key_derivation_operation_t *o,uns
 }
 static int psa_key_derivation_abort(psa_key_derivation_operation_t *o) {memset(o,0,sizeof(*o));return 0;}
 static int nvs_open(const char *a,int b,int *c) {(void)a;(void)b;*c=1;return fail_nvs?ESP_FAIL:ESP_OK;}
-static int nvs_get_blob(int a,const char *b,void *out,size_t *n) {(void)a;(void)b;if(!blob_size||*n<blob_size)return ESP_FAIL;memcpy(out,blob,blob_size);*n=blob_size;return ESP_OK;}
-static int nvs_set_blob(int a,const char *b,const void *out,size_t n) {(void)a;(void)b;assert(n<=sizeof blob);memcpy(blob,out,n);blob_size=n;return ESP_OK;}
-static int nvs_commit(int a) {(void)a;return ESP_OK;}
-static void nvs_close(int a) {(void)a;}
+static int psa_hash_compute(int alg,const uint8_t *input,size_t n,uint8_t *output,size_t capacity,size_t *length) {
+ assert(alg==PSA_ALG_SHA_256 && capacity>=32);if(fail_token_hash)return ESP_FAIL;
+ CC_SHA256(input,(CC_LONG)n,output);*length=32;return PSA_SUCCESS;
+}
+static int nvs_get_blob(int a,const char *key,void *out,size_t *n) {
+ (void)a;bool sessions=!strcmp(key,"sessions_v1");
+ const unsigned char *data=sessions?session_blob:blob;size_t size=sessions?session_blob_size:blob_size;
+ if(!size||*n<size)return ESP_FAIL;if(out)memcpy(out,data,size);*n=size;return ESP_OK;
+}
+static int nvs_set_blob(int a,const char *key,const void *out,size_t n) {
+ (void)a;if(fail_nvs_set)return ESP_FAIL;assert(n<=sizeof pending_blob);
+ memcpy(pending_blob,out,n);pending_size=n;pending_sessions=!strcmp(key,"sessions_v1");return ESP_OK;
+}
+static int nvs_commit(int a) {
+ (void)a;if(fail_nvs_commit)return ESP_FAIL;
+ if(pending_sessions){memcpy(session_blob,pending_blob,pending_size);session_blob_size=pending_size;session_writes++;}
+ else {assert(pending_size<=sizeof blob);memcpy(blob,pending_blob,pending_size);blob_size=pending_size;}
+ pending_size=0;return ESP_OK;
+}
+static void nvs_close(int a) {(void)a;pending_size=0;}

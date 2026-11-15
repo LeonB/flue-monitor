@@ -28,6 +28,7 @@ typedef int esp_err_t;
 #define ESP_ERR_INVALID_ARG 1
 #define ESP_ERR_NOT_FOUND 2
 #define ESP_ERR_TIMEOUT 3
+#define ESP_ERR_INVALID_STATE 4
 #define HTTPD_SOCK_ERR_TIMEOUT -2
 #define HTTPD_400_BAD_REQUEST 400
 #define HTTPD_401_UNAUTHORIZED 401
@@ -63,19 +64,20 @@ static int httpd_req_recv(httpd_req_t *r,char *out,int amount) {
 }
 static int httpd_resp_send_err(httpd_req_t *r,int code,const char *text) {(void)text;r->status=code;return ESP_FAIL;}
 static int httpd_resp_send(httpd_req_t *r,const void *body,size_t n){assert(n==4 && !memcmp(body,"test",4));r->status=200;return ESP_OK;}
-static int httpd_resp_sendstr(httpd_req_t *r,const char *text) {(void)text;r->status=200;return ESP_OK;}
+static int httpd_resp_sendstr(httpd_req_t *r,const char *text) {(void)text;if(!r->status)r->status=200;return ESP_OK;}
 static int httpd_resp_set_type(httpd_req_t *r,const char *text) {(void)r;(void)text;return ESP_OK;}
-static int httpd_resp_set_status(httpd_req_t *r,const char *text) {(void)r;(void)text;return ESP_OK;}
+static int httpd_resp_set_status(httpd_req_t *r,const char *text) {r->status=atoi(text);return ESP_OK;}
 static int httpd_resp_set_hdr(httpd_req_t *r,const char *k,const char *v) {(void)r;(void)k;(void)v;return ESP_OK;}
 static bool auth_required(httpd_req_t *r) {(void)r;return false;}
 static bool dashboard_auth_check_csrf(httpd_req_t *r) {(void)r;return true;}
 static bool auth_setup_is_remote(httpd_req_t *r) {(void)r;return false;}
 static bool dashboard_auth_is_configured(void) {return true;}
 static int dashboard_auth_set_password(const char *a,const char *b) {(void)a;(void)b;return ESP_OK;}
+static int auth_result, logout_result;
 static int dashboard_auth_login(httpd_req_t *r,const char *password,bool remember) {
- (void)r;assert(!live_buffers);assert(!strcmp(password,"test-password"));assert(remember);logins++;return ESP_OK;
+ (void)r;assert(!live_buffers);assert(!strcmp(password,"test-password"));assert(remember);logins++;return auth_result;
 }
-static void dashboard_auth_logout(httpd_req_t *r) {(void)r;}
+static int dashboard_auth_logout(httpd_req_t *r) {(void)r;return logout_result;}
 typedef struct {const char *label;} esp_partition_t;
 typedef int esp_ota_handle_t;
 #define OTA_SIZE_UNKNOWN 0
@@ -105,7 +107,15 @@ int main(void) {
  httpd_req_t r={.uri="/api/auth/login",.input=login,.content_len=(int)strlen(login)};
  fail_alloc=true;auth_form_handler(&r);assert(r.status==500 && !reads && !logins && !live_buffers);
  fail_alloc=false;fail_read=true;auth_form_handler(&r);assert(r.status==400 && !live_buffers);
- fail_read=false;r.received=0;auth_form_handler(&r);assert(r.status==200 && logins==1 && !live_buffers);
+ fail_read=false;r.received=0;r.status=0;auth_form_handler(&r);assert(r.status==200 && logins==1 && !live_buffers);
+ for(int error=0;error<2;error++) {
+  auth_result=error?ESP_FAIL:ESP_ERR_INVALID_STATE;
+  r=(httpd_req_t){.uri="/api/auth/login",.input=login,.content_len=(int)strlen(login)};
+  auth_form_handler(&r);assert(r.status==(error?500:503)&&!live_buffers);
+ }
+ auth_result=ESP_OK;logout_result=ESP_FAIL;
+ r=(httpd_req_t){.uri="/api/auth/logout",.input="{}",.content_len=2};
+ auth_form_handler(&r);assert(r.status==500&&!live_buffers);logout_result=ESP_OK;
  r=(httpd_req_t){.uri="/api/auth/login",.input="{",.content_len=1};auth_form_handler(&r);assert(r.status==400 && !live_buffers);
  puts("PASS login: fragmented input, invalid JSON, receive/allocation failure and free before authentication");
  char image[2501];for(unsigned i=0;i<sizeof image;i++)image[i]=(char)i;expected_image=image;

@@ -321,9 +321,16 @@ browser sessions can remain active, for example desktop, iPhone and curl.
 Signing out ends only the current session; when all eight slots are occupied,
 a new login replaces the least recently used session. Without Keep me signed
 in, each session uses a browser-session cookie (no expiry date).
-Browsers may preserve session cookies when restoring a previous session. Remembered sessions
-have no server time limit and end on monitor restart. Five failed sign-ins
-cause a 30-second lockout. Password changes invalidate all sessions.
+Browsers may preserve session cookies when restoring a previous session. Without
+Keep me signed in, sessions end on monitor restart. Remembered sessions survive
+normal restarts and OTA updates for a fixed 90 days from login. Only SHA-256 token
+hashes and expiry times are saved in a bounded NVS snapshot, bound to the current
+password credential. No raw session cookies are stored in flash. Login/rotation,
+logout and eviction update the snapshot; ordinary requests never write it or
+extend the expiry. Remembered sessions require synchronized device time (SNTP)
+to enforce expiry. Signing out and changing the password revoke saved sessions
+across restarts. Five failed sign-ins cause a 30-second lockout. Flash erase or
+an explicit settings reset can still require a fresh login.
 Remote cookies are Secure and all remote state-changing requests require
 a matching HTTPS Origin. The device WebSocket used by flue-display remains outside dashboard
 authentication. The local proxy preview in

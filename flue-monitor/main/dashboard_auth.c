@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "esp_random.h"
 #include "lwip/sockets.h"
@@ -14,8 +15,10 @@
 #define AUTH_PASSWORD_MIN 8
 #define AUTH_PASSWORD_MAX 128
 #define AUTH_PBKDF2_ROUNDS 12000
-// Browsers cap persistent cookies; refresh this lifetime during remembered use.
-#define AUTH_COOKIE_SECONDS (400 * 24 * 60 * 60)
+// Fixed lifetime: ordinary requests never extend it or write to flash.
+#define AUTH_COOKIE_SECONDS (90 * 24 * 60 * 60)
+#define AUTH_SESSIONS_KEY "sessions_v1"
+#define AUTH_CLOCK_MIN 1767225600LL // Same sanity floor as tunnel TLS (2026).
 
 typedef struct {
   uint8_t salt[16];
@@ -27,20 +30,59 @@ static bool s_configured;
 // Bounded RAM use; each browser/origin has its own token and cookie lifetime.
 #define AUTH_MAX_SESSIONS 8
 typedef struct {
-  char token[65];
+  uint8_t token_hash[32];
   bool remember;
+  int64_t expires_at;
   int64_t last_used_us;
 } session_t;
 static session_t s_sessions[AUTH_MAX_SESSIONS];
 
-static void session_cookie(web_request_t *req, const session_t *session) {
+typedef struct {
+  uint8_t token_hash[32];
+  int64_t expires_at;
+} saved_session_t;
+typedef struct {
+  uint32_t version;
+  uint8_t credential_hash[32];
+  saved_session_t sessions[AUTH_MAX_SESSIONS];
+} saved_sessions_t;
+
+static bool session_present(const session_t *session) {
+  uint8_t any = 0;
+  for (size_t i = 0; i < sizeof session->token_hash; ++i) any |= session->token_hash[i];
+  return any != 0;
+}
+
+// Save a bounded snapshot, never raw cookies. Binding it to the current
+// credential makes a password change revoke it atomically with that credential,
+// even if power fails before a newer session snapshot can be written.
+static esp_err_t save_sessions(void) {
+  saved_sessions_t saved = { .version = 1 };
+  memcpy(saved.credential_hash, s_credential.hash, sizeof saved.credential_hash);
+  for (size_t i = 0; i < AUTH_MAX_SESSIONS; ++i) {
+    if (!s_sessions[i].remember) continue;
+    memcpy(saved.sessions[i].token_hash, s_sessions[i].token_hash, 32);
+    saved.sessions[i].expires_at = s_sessions[i].expires_at;
+  }
+  nvs_handle_t nvs;
+  esp_err_t err = nvs_open(AUTH_NAMESPACE, NVS_READWRITE, &nvs);
+  if (err == ESP_OK) {
+    err = nvs_set_blob(nvs, AUTH_SESSIONS_KEY, &saved, sizeof saved);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+  }
+  memset(&saved, 0, sizeof saved);
+  return err;
+}
+
+static void session_cookie(web_request_t *req, const char *token, bool remember) {
   // Native HTTPD retains this pointer until send; direct HTTP/2 copies it.
   static char cookie[160];
   char persistence[40] = "";
-  if (session->remember) snprintf(persistence, sizeof persistence, "; Max-Age=%d", AUTH_COOKIE_SECONDS);
+  if (remember) snprintf(persistence, sizeof persistence, "; Max-Age=%d", AUTH_COOKIE_SECONDS);
   snprintf(cookie, sizeof cookie,
            "flu_session=%s; Path=/%s; HttpOnly; SameSite=Strict%s",
-           session->token, persistence, dashboard_auth_is_remote(req) ? "; Secure" : "");
+           token, persistence, dashboard_auth_is_remote(req) ? "; Secure" : "");
   web_set_header(req, "Set-Cookie", cookie);
 }
 static unsigned s_failed_logins;
@@ -91,12 +133,28 @@ static void make_token(char out[65]) {
 
 void dashboard_auth_init(void) {
   memset(s_sessions, 0, sizeof s_sessions);
+  memset(&s_credential, 0, sizeof s_credential);
   s_configured = false;
+  s_failed_logins = 0;
+  s_login_lockout_until_us = 0;
   nvs_handle_t nvs;
   size_t size = sizeof s_credential;
   if (nvs_open(AUTH_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
     if (nvs_get_blob(nvs, AUTH_KEY, &s_credential, &size) == ESP_OK && size == sizeof s_credential)
       s_configured = true;
+    saved_sessions_t saved = {0};
+    size = sizeof saved;
+    if (s_configured && nvs_get_blob(nvs, AUTH_SESSIONS_KEY, &saved, &size) == ESP_OK &&
+        size == sizeof saved && saved.version == 1 &&
+        equal_secret(saved.credential_hash, s_credential.hash, sizeof saved.credential_hash)) {
+      for (size_t i = 0; i < AUTH_MAX_SESSIONS; ++i) {
+        if (saved.sessions[i].expires_at <= AUTH_CLOCK_MIN) continue;
+        memcpy(s_sessions[i].token_hash, saved.sessions[i].token_hash, 32);
+        s_sessions[i].expires_at = saved.sessions[i].expires_at;
+        s_sessions[i].remember = true;
+      }
+    }
+    memset(&saved, 0, sizeof saved);
     nvs_close(nvs);
   }
 }
@@ -139,11 +197,21 @@ static session_t *request_session(web_request_t *req) {
     const char *end = strchr(p, ';');
     size_t n = end ? (size_t)(end - p) : strlen(p);
     if (n == 76 && !strncmp(p, "flu_session=", 12)) {
-      for (size_t i = 0; i < AUTH_MAX_SESSIONS; ++i)
-        if (s_sessions[i].token[0] &&
-            equal_secret((const uint8_t *)(p + 12), (const uint8_t *)s_sessions[i].token, 64))
-          return &s_sessions[i];
-      return NULL;
+      uint8_t candidate[32];
+      size_t hash_size = 0;
+      if (psa_hash_compute(PSA_ALG_SHA_256, (const uint8_t *)p + 12, 64,
+                           candidate, sizeof candidate, &hash_size) != PSA_SUCCESS || hash_size != 32)
+        return NULL;
+      int64_t utc = (int64_t)time(NULL);
+      session_t *found = NULL;
+      for (size_t i = 0; i < AUTH_MAX_SESSIONS; ++i) {
+        session_t *session = &s_sessions[i];
+        if (session_present(session) && equal_secret(candidate, session->token_hash, 32) &&
+            (!session->remember || (utc >= AUTH_CLOCK_MIN && utc < session->expires_at)))
+          found = session;
+      }
+      memset(candidate, 0, sizeof candidate);
+      return found;
     }
     if (!end) break;
     p = end + 1;
@@ -156,7 +224,6 @@ bool dashboard_auth_check(web_request_t *req) {
   session_t *session = request_session(req);
   if (!session) return false;
   session->last_used_us = esp_timer_get_time();
-  if (session->remember) session_cookie(req, session);
   return true;
 }
 
@@ -183,23 +250,45 @@ esp_err_t dashboard_auth_login(web_request_t *req, const char *password, bool re
   }
   s_failed_logins = 0;
   s_login_lockout_until_us = 0;
-  // A re-login replaces only this browser's token. Otherwise prefer an empty
-  // slot, evicting the least recently used session only when all eight are full.
+  int64_t utc = (int64_t)time(NULL);
+  // Without a synchronized clock we cannot enforce a durable expiry. The cookie
+  // remains in the browser while the boot-time SNTP client obtains the time.
+  if (remember && utc < AUTH_CLOCK_MIN) return ESP_ERR_INVALID_STATE;
+  // Re-login rotates only this browser; otherwise reuse an empty/expired slot,
+  // evicting the least recently used session when all eight slots are occupied.
   session_t *session = request_session(req);
   if (!session) {
     session = &s_sessions[0];
     for (size_t i = 0; i < AUTH_MAX_SESSIONS; ++i) {
-      if (!s_sessions[i].token[0]) { session = &s_sessions[i]; break; }
+      if (!session_present(&s_sessions[i]) ||
+          (s_sessions[i].remember && utc >= AUTH_CLOCK_MIN && utc >= s_sessions[i].expires_at)) {
+        session = &s_sessions[i]; break;
+      }
       if (s_sessions[i].last_used_us < session->last_used_us) session = &s_sessions[i];
     }
   }
-  memset(session, 0, sizeof *session);
-  make_token(session->token);
-  session->remember = remember;
-  session->last_used_us = esp_timer_get_time();
-  session_cookie(req, session);
-  web_set_header(req, "Cache-Control", "no-store");
-  return ESP_OK;
+  char token[65];
+  make_token(token);
+  session_t next = { .remember = remember,
+                     .expires_at = remember ? utc + AUTH_COOKIE_SECONDS : 0,
+                     .last_used_us = esp_timer_get_time() };
+  size_t hash_size = 0;
+  if (psa_hash_compute(PSA_ALG_SHA_256, (const uint8_t *)token, 64,
+                       next.token_hash, sizeof next.token_hash, &hash_size) != PSA_SUCCESS || hash_size != 32) {
+    memset(token, 0, sizeof token);
+    return ESP_FAIL;
+  }
+  session_t previous = *session;
+  *session = next;
+  esp_err_t err = (remember || previous.remember) ? save_sessions() : ESP_OK;
+  if (err == ESP_OK) {
+    session_cookie(req, token, remember);
+    web_set_header(req, "Cache-Control", "no-store");
+  } else *session = previous;
+  memset(token, 0, sizeof token);
+  memset(&next, 0, sizeof next);
+  memset(&previous, 0, sizeof previous);
+  return err;
 }
 
 esp_err_t dashboard_auth_set_password(const char *current, const char *password) {
@@ -231,9 +320,17 @@ esp_err_t dashboard_auth_set_password(const char *current, const char *password)
   return err;
 }
 
-void dashboard_auth_logout(web_request_t *req) {
+esp_err_t dashboard_auth_logout(web_request_t *req) {
   session_t *session = request_session(req);
-  if (session) memset(session, 0, sizeof *session);
+  if (session) {
+    session_t previous = *session;
+    memset(session, 0, sizeof *session);
+    esp_err_t err = previous.remember ? save_sessions() : ESP_OK;
+    if (err != ESP_OK) *session = previous;
+    memset(&previous, 0, sizeof previous);
+    if (err != ESP_OK) return err;
+  }
   web_set_header(req, "Set-Cookie", "flu_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
   web_set_header(req, "Cache-Control", "no-store");
+  return ESP_OK;
 }

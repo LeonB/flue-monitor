@@ -1,5 +1,39 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-16 persistent remembered dashboard sessions
+
+Owner approved bounded persistent sessions instead of JWT: remembered sessions
+survive OTA/reboot with fixed90day expiry, max8slots. Runtime+NVS store SHA256
+hashes, never raw cookies; sessions_v1 snapshot360B (plus NVS overhead), bound
+to the password credential hash. Credential replacement invalidates an old
+snapshot even across power loss without a second NVS transaction. Logout,
+rotation or eviction of a remembered slot must persist successfully before
+reporting success; failure rolls runtime state back. Normal requests never
+refresh cookies or write NVS. Volatile sessions still end at reboot. Monotonic
+LRU use resets on reboot (restored slots initially tie); current-boot use picks
+least recently used. Expired slots reused. Valid UTC required for remembered
+session checks/new remembered login; boot awaits existing SNTP (same2026 floor
+as tunnel TLS), and unsynced checks do not destroy stored sessions. No stack,
+watchdog, display, settings or graph format changes. Login help now90days.
+
+Host ASan/UBSan tests cover real SHA256/PBKDF2, eight durable slots plus eviction,
+reboot/expiry/clock sync, durable logout, remembered-to-volatile rotation,
+password binding, malformed snapshots, open/set/commit failures, hash failure,
+and100requests without writes/cookie renewal. Actual HTTP2 adapter/auth passed
+both gzip variants; login/OTA PSRAM failure tests cover clock503 and storage500.
+Login-page, asset versions, BoschUI and settings-sync tests passed. IDF6.0.3
+build1518912B,17088B OTA free; SHA256
+5ccf698431f3d85c4d684a830667bffb3dc9adbca2dbbc36ad8724a4eb987022.
+Frozen artifacts/source/config/logs .cache/persistent-auth/5ccf698431f3d85c/.
+First OTA backup .cache/ota-history/20261115T232130419001Z/ verified360samples/
+15events. Chrome checked Remember me and logged in on new firmware. Second OTA
+.cache/ota-history/20261115T232321802911Z/ also verified360samples/15events.
+After that reboot, Chrome reload opened the live dashboard without any login
+or password entry: remembered session survival verified on hardware. New live
+thermocouple reading85C confirmed requests worked after reboot, not just cached
+HTML. Other browsers must opt into Keep me signed in once on this version.
+Owner requested committing this change; nothing pushed. No USB or watchdog restart.
+
 ## 2026-11-16 burn-session lighting and cooling threshold
 
 Owner approved sustained-rise starts and 30min below a configurable end threshold

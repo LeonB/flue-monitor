@@ -105,7 +105,11 @@ static esp_err_t auth_form_handler(web_request_t *req) {
            cJSON_IsString(confirm) && strcmp(pw->valuestring, confirm->valuestring) == 0)
     err = dashboard_auth_set_password(current->valuestring, pw->valuestring);
   else if (strcmp(req->uri, "/api/auth/logout") == 0 && dashboard_auth_check_csrf(req)) {
-    dashboard_auth_logout(req);
+    err = dashboard_auth_logout(req);
+    if (err != ESP_OK) {
+      cJSON_Delete(root);
+      return web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not save sign-out. Please try again.");
+    }
     cJSON_Delete(root);
     web_set_type(req, "application/json");
     return web_sendstr(req, "{\"success\":true}");
@@ -118,11 +122,20 @@ static esp_err_t auth_form_handler(web_request_t *req) {
       return web_sendstr(req, "{\"success\":true}");
     if (strcmp(req->uri, "/api/auth/setup") == 0) {
       // First-use setup signs in the owner immediately after persisting.
-      dashboard_auth_login(req, password_copy, keep_signed_in);
+      err = dashboard_auth_login(req, password_copy, keep_signed_in);
+      if (err != ESP_OK)
+        return web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Password saved. Please sign in again.");
       return web_sendstr(req, "{\"success\":true}");
     }
     return web_sendstr(req, "{\"success\":true,\"reauthenticate\":true}");
   }
+  if (err == ESP_ERR_INVALID_STATE) {
+    web_set_type(req, "application/json");
+    web_set_status(req, "503 Service Unavailable");
+    return web_sendstr(req, "{\"error\":\"Waiting for the monitor clock. Please try again shortly.\"}");
+  }
+  if (err != ESP_ERR_NOT_FOUND && err != ESP_ERR_TIMEOUT && err != ESP_ERR_INVALID_ARG)
+    return web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not save sign-in. Please try again.");
   web_set_type(req, "application/json");
   const char *status = err == ESP_ERR_NOT_FOUND ? "401 Unauthorized" :
                        err == ESP_ERR_TIMEOUT ? "429 Too Many Requests" : "400 Bad Request";
