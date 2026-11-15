@@ -32,9 +32,10 @@ assets = {
     "icon_512": root / "main/web_ui/icon-512.png",
     "manifest": root / "main/web_ui/site.webmanifest",
 
+    "login": root / "main/web_ui/login.html",
     "html": root / "main/web_ui/dashboard.html",
     "js": root / "main/web_ui/dashboard.js",
-    "css": root / "main/web_ui/dashboard.css",
+    "css": root.parent / "components/captive_portal/styles.css",
     "burn_graph_js": root / "main/web_ui/burn-graph.js",
     "uplot_js": root / "main/web_ui/vendor/uplot.min.js",
     "uplot_css": root / "main/web_ui/vendor/uplot.min.css",
@@ -43,11 +44,10 @@ assets = {
     **{f"figtree_{weight}": root / "main/web_ui/fonts/figtree-variable.woff2"
        for weight in (400, 600, 700)},
 }
-assert assets["css"].read_bytes() == (root.parent / "components/captive_portal/styles.css").read_bytes(), "Shared dashboard/portal CSS must stay identical"
 # Resolve dependencies before hashing their consumers. A changed font therefore
 # changes its HTML URL, without invalidating unrelated assets.
 urls = {name: "/" + path.name for name, path in assets.items()}
-urls.update(html="/", loading="/loading.html", service_worker="/service-worker.js",
+urls.update(login="/login", html="/", loading="/loading.html", service_worker="/service-worker.js",
             js="/dashboard.js", css="/dashboard.css", burn_graph_js="/burn-graph.js",
             uplot_js="/vendor/uplot.min.js", uplot_css="/vendor/uplot.min.css",
             alpine_js="/alpinejs.min.js", stove_svg="/flue-icon-stove.svg",
@@ -63,7 +63,7 @@ payloads, versions, versioned_urls = {}, {}, {}
 
 def version_references(raw):
     for name, url in sorted(urls.items(), key=lambda item: -len(item[1])):
-        if name in ("html", "loading", "service_worker"):
+        if name in ("html", "login", "loading", "service_worker"):
             continue
         # Match complete URLs in HTML, CSS and JSON, never a URL prefix.
         pattern = re.escape(url.encode()) + rb"(?=[\"'\s)])"
@@ -76,7 +76,7 @@ def prepare(name):
     if name in payloads:
         return
     raw = assets[name].read_bytes()
-    if name in ("html", "manifest"):
+    if name in ("html", "login", "manifest"):
         raw = version_references(raw)
     if name == "service_worker":
         startup_version = hashlib.sha256(assets["loading"].read_bytes() + raw).hexdigest()[:24]
@@ -101,20 +101,7 @@ for name, path in assets.items():
         for offset in range(0, len(compressed), 20):
             lines.append(",".join(str(b) for b in compressed[offset:offset + 20]) + ",")
         lines.append("};")
-# Keep the existing C login template as the single source, but store it only
-# compressed in firmware, just like the other HTML assets. Resolve generated
-# font URLs before compression so cache-version behavior stays identical.
-api_source = (root / "main/rest_api.c").read_text()
-login_source = api_source.split("static const char login_page[] = ", 1)[1].split("\n\nstatic esp_err_t auth_status_handler", 1)[0]
-login_tokens = re.findall(r'"(?:[^"\\]|\\.)*"|ASSET_[A-Za-z0-9_]+_URL', login_source)
-login = "".join(json.loads(token) if token.startswith('"') else versioned_urls[token[6:-4]]
-                for token in login_tokens).encode()
-compressed = gzip.compress(login, compresslevel=9, mtime=0)
-lines.append(f'#define ASSET_login_GZIP_ETAG "{hashlib.sha256(compressed).hexdigest()[:24]}"')
-lines += [f"#define ASSET_login_RAW_SIZE {len(login)}", "static const unsigned char asset_login_gzip[] = {"]
-for offset in range(0, len(compressed), 20):
-    lines.append("  " + ",".join(str(b) for b in compressed[offset:offset + 20]) + ",")
-lines.append("};")
+login = payloads["login"]
 
 if __name__ == "__main__":
     output = Path(sys.argv[1])

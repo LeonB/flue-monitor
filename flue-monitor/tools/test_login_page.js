@@ -1,7 +1,6 @@
 // Exercise the actual inline firmware login-page script without a browser.
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
-const source = fs.readFileSync('main/rest_api.c', 'utf8').split('static const char login_page[] = ')[1].split('\n\nstatic esp_err_t auth_status_handler')[0];
-const html = [...source.matchAll(/"(?:[^"\\]|\\.)*"/g)].map(m => JSON.parse(m[0])).join('');
+const html = fs.readFileSync('main/web_ui/login.html', 'utf8');
 assert.match(html, /type="password"/);
 assert.match(html, /<form id="dashboard-login" name="dashboard-login" method="post" action="\/api\/auth\/login" autocomplete="on">/);
 assert.match(html, /id="b" type="submit"/);
@@ -10,7 +9,7 @@ async function page(configured, remote = false, single = false) {
   const elements = Object.fromEntries(['p','c','intro','label','b','e','show','title','remember'].map(k => [k, { value: '', style: {}, textContent: '', disabled: k === 'b', checked:false, type:'password', setAttribute(name,value){this[name]=value} }]));
   const form = {}; let writes = [], redirects = [];
   const context = { AbortController, setTimeout, clearTimeout, document: { querySelector: selector => selector === 'form' ? form : elements.e, getElementById: id => single && id === 'c' ? null : elements[id], createElement: () => ({style:{},setAttribute(name,value){this[name]=value}}) },
-    location: { pathname: '/login', protocol: 'https:', hostname: 'demo.pagekite.me', host: 'demo.pagekite.me', replace: value => redirects.push(value) },
+    location: { pathname: '/login', protocol: 'https:', hostname: 'monitor.example.com', host: 'monitor.example.com', replace: value => redirects.push(value) },
     fetch: async (url, options) => { if (!options.method) return {ok:true,json: async () => ({ configured, setup_local_only: remote })}; writes.push({url, body: JSON.parse(options.body)}); return {ok:true, json: async()=>({success:true})}; }
   };
   vm.createContext(context); vm.runInContext(script, context);

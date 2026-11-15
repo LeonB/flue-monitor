@@ -1,4 +1,5 @@
 #include "compressed_assets.h"
+#include "asset_encoding.h"
 #include "buffer_memory.h"
 #include "miniz.h"
 #include <stdlib.h>
@@ -12,21 +13,7 @@ const compressed_asset_t *portal_root_asset(void) { return &portal_root; }
 bool compressed_asset_accepts_gzip(httpd_req_t *req) {
   char encodings[160];
   if (httpd_req_get_hdr_value_str(req, "Accept-Encoding", encodings, sizeof(encodings)) != ESP_OK) return false;
-  char *save = NULL;
-  for (char *token = strtok_r(encodings, ",", &save); token; token = strtok_r(NULL, ",", &save)) {
-    while (*token == ' ' || *token == '\t') token++;
-    char *params = strchr(token, ';');
-    if (params) *params++ = 0;
-    char *end = token + strlen(token);
-    while (end > token && (end[-1] == ' ' || end[-1] == '\t')) *--end = 0;
-    if (strcasecmp(token, "gzip") != 0) continue;
-    if (params) {
-      while (*params == ' ' || *params == '\t') params++;
-      if (strncasecmp(params, "q=", 2) == 0 && strtod(params + 2, NULL) <= 0) return false;
-    }
-    return true;
-  }
-  return false;
+  return asset_encoding_accepts_gzip(encodings);
 }
 
 // Build-generated gzip has a fixed 10-byte header, raw DEFLATE, 8-byte trailer.

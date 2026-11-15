@@ -292,10 +292,9 @@ The token is write-only: settings return `cloudflare_token_set`, never the token
 Blank or omitted tokens preserve the saved value. Configuration persists in NVS;
 saving reconnects gracefully, and disabling closes the tunnel while retaining
 its configuration. Old settings (including reverted panel layouts) retain their
-sensor/display/Sheets values; Cloudflare starts disabled and needs configuration.
-The new blob uses `settings_v2`; `settings_v1` is retained for app rollback.
-The PageKite client is no longer built. Its old blob tail exists only for NVS
-compatibility and is never exposed or used for connections.
+sensor/display/Sheets values. Existing Cloudflare configuration migrates too.
+New saves use the smaller `settings_v3` blob without retired tunnel fields;
+`settings_v1` and `settings_v2` remain untouched for app rollback.
 
 Public requests are restricted to the configured HTTPS hostname and dashboard
 route allowlist. Assets and API responses are served directly over HTTP/2,
@@ -351,7 +350,7 @@ TLS/PSA, tunnel data and HTTP/2 sessions use strict PSRAM allocation; stacks sta
 internal. Four connections still require hardware qualification with PSRAM and
 the full monitor workload. The no-PSRAM S3 prototype ran out of memory with four.
 Size optimization, link optimization scoped to the two protocol libraries, and
-build-time gzip of the unchanged login template keep the existing OTA partitions.
+build-time gzip of the login HTML asset keep the existing OTA partitions.
 
 Host checks: `tools/test_cloudflare_settings.py`, `tools/test_cloudflare_tunnel.py`,
 `tools/test_cloudflare_memory.py`, `tools/test_login_compression.py`, and
@@ -538,10 +537,9 @@ domains still use the old identifiers.
 | Device discovery (implemented) | `flue-monitor.local`; `flue-display.local` | Change monitor `main/config.h` `MDNS_HOSTNAME`, monitor `main/main.c` instance name via that macro, display `main/config.h` `FLU_MONITOR_MDNS_NAME`, and display `main/flue_poll.c` hostname/instance. Deploy monitor first by confirmed IP (the running display retains its resolved IP), then deploy the display to resolve the new name. Verify settings fetch, WebSocket reconnect and acknowledgements. Update bookmarks and local proxy targets. |
 | Setup Wi-Fi (implemented) | `Flu Monitor Setup` → `Flue Monitor Setup`; `Flu Display Setup` → `Flue Display Setup` | Both `main/config.h` files and both device READMEs. Setup passwords in source are now `flue-monitor-setup` and `flue-display-setup`; deployed firmware keeps its previous password until flashed. |
 | Public domain | `flumonitor.vanutsteen.nl` → `fluemonitor.vanutsteen.nl` | Create the Cloudflare published application and its tunnel CNAME, then configure the same hostname on the monitor after deployment. New hostname means a separate browser cookie. Keep the old address during cutover where routing supports it. |
-| Legacy PageKite name | `flumonitor-vanutsteen.pagekite.me` | Historical production address. The Cloudflare integration removes this client; existing deployed firmware and external routing are unchanged until a separate cutover. |
 | Repository and folders (implemented locally) | `LeonB/flue-monitor`, `flue-monitor/`, `flue-display/` | GitHub repo renamed by owner; origin and local checkout/subfolders updated. Relative paths and documentation links updated. Ignored credentials preserved. Reopen IDE/Codex at the new checkout path. |
 | Build and OTA artifacts (implemented locally) | `project(flue-monitor)` / `project(flue-display)` | Regenerate both builds after moving folders. The shared root `ota_flash.sh` derives the `.bin` name from the project folder. Old generated builds are archived under `/tmp/flue-monitor-rename-builds-20261016`; no partition/NVS reset. |
-| Internal references | `FLU_MONITOR_MDNS_NAME`, `FLU_DISPLAY_TEST_WS_URI`, PageKite client-version string, demo domains and temporary filenames | Update source and build/test scripts together. Preserve historical diagnostic references where useful. These can remain compatibility names until the network/build cutover is complete. |
+| Internal references | `FLU_MONITOR_MDNS_NAME`, `FLU_DISPLAY_TEST_WS_URI`, demo domains and temporary filenames | Update source and build/test scripts together. Preserve historical diagnostic references where useful. These can remain compatibility names until the network/build cutover is complete. |
 
 Keep the session cookie `flu_session`, preview cookie `flu_auth_preview`, NVS
 namespaces/keys, API paths and WebSocket payload fields stable: renaming them

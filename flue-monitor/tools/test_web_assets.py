@@ -23,7 +23,7 @@ def get(path, headers):
 assets = {
     "/": root / "main/web_ui/dashboard.html",
     "/dashboard.js": root / "main/web_ui/dashboard.js",
-    "/dashboard.css": root / "main/web_ui/dashboard.css",
+    "/dashboard.css": root.parent / "components/captive_portal/styles.css",
     "/burn-graph.js": root / "main/web_ui/burn-graph.js",
     "/vendor/uplot.min.js": root / "main/web_ui/vendor/uplot.min.js",
     "/vendor/uplot.min.css": root / "main/web_ui/vendor/uplot.min.css",

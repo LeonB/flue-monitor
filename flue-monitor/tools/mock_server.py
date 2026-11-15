@@ -224,7 +224,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/vendor/uplot.min.js": (WEB_UI_DIR, "vendor/uplot.min.js", "application/javascript"),
             "/vendor/uplot.min.css": (WEB_UI_DIR, "vendor/uplot.min.css", "text/css"),
             "/dashboard.js": (WEB_UI_DIR, "dashboard.js", "application/javascript"),
-            "/dashboard.css": (WEB_UI_DIR, "dashboard.css", "text/css"),
+            "/dashboard.css": (CAPTIVE_PORTAL_DIR, "styles.css", "text/css"),
             "/alpinejs.min.js": (CAPTIVE_PORTAL_DIR, "alpine.min.js", "application/javascript"),
             "/fonts/caprasimo-400.woff2": (WEB_UI_DIR, "fonts/caprasimo-400.woff2", "font/woff2"),
             "/fonts/figtree-400.woff2": (WEB_UI_DIR, "fonts/figtree-400.woff2", "font/woff2"),

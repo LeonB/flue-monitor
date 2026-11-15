@@ -16,7 +16,7 @@ from mock_server import Handler, WEB_UI_DIR
 upstream = sys.argv[1].rstrip('/')
 port = int(sys.argv[2]) if len(sys.argv) > 2 else 8773
 opener = build_opener(ProxyHandler({}))
-LOGIN_PAGE = Path(__file__).with_name('pagekite_auth_preview.html')
+LOGIN_PAGE = Path(__file__).with_name('auth_preview.html')
 PREVIEW_PASSWORD = 'review'
 SESSION_TOKEN = secrets.token_urlsafe(32)
 
@@ -57,7 +57,7 @@ class Proxy(Handler):
           <form id="auth-preview-password-form" method="post" action="/auth/password" style="margin:0" onsubmit="submitAuthPreviewPassword(event,this)">
             <div class="text-field">
               <label for="auth-current-password">Dashboard password</label>
-              <small class="field-help" style="margin-bottom:8px">Protect dashboard access on your home network and through PageKite. Changing the password signs out existing sessions.</small>
+              <small class="field-help" style="margin-bottom:8px">Protect dashboard access on your home network and through Cloudflare. Changing the password signs out existing sessions.</small>
               <label for="auth-current-password">Current password</label>
               <input id="auth-current-password" name="current_password" class="input" type="password" autocomplete="current-password" required>
             </div>

@@ -1,6 +1,7 @@
 #include "web_request.h"
 #include "buffer_memory.h"
 #include "compressed_assets.h"
+#include "asset_encoding.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -153,21 +154,7 @@ bool web_accepts_gzip(web_request_t *req) {
   if (req->native) return compressed_asset_accepts_gzip(req->native);
   char encodings[160];
   if (web_header(req, "Accept-Encoding", encodings, sizeof encodings) != ESP_OK) return false;
-  char *save = NULL;
-  for (char *token = strtok_r(encodings, ",", &save); token; token = strtok_r(NULL, ",", &save)) {
-    while (*token == ' ' || *token == '\t') token++;
-    char *params = strchr(token, ';');
-    if (params) *params++ = 0;
-    char *end = token + strlen(token);
-    while (end > token && (end[-1] == ' ' || end[-1] == '\t')) *--end = 0;
-    if (strcasecmp(token, "gzip")) continue;
-    if (params) {
-      while (*params == ' ' || *params == '\t') params++;
-      if (!strncasecmp(params, "q=", 2) && strtod(params + 2, NULL) <= 0) return false;
-    }
-    return true;
-  }
-  return false;
+  return asset_encoding_accepts_gzip(encodings);
 }
 
 esp_err_t web_send_identity(web_request_t *req, const unsigned char *gzip, size_t size, size_t raw_size) {

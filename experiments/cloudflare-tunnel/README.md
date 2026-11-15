@@ -2,7 +2,7 @@
 
 This experiment runs **on an ESP32-S3**, independently of flue-monitor.
 It uses igrr/esp-cf-tunnel at the commit pinned in main/idf_component.yml.
-It has no dependency on the PageKite client or the stove-monitor HTTP server.
+It has no dependency on the stove-monitor HTTP server.
 
 Endpoints through a dedicated Cloudflare test hostname:
 
@@ -75,11 +75,10 @@ without PSRAM or further memory optimization.
 
 With the device already provisioned, omit --port to rerun public checks.
 
-## Remaining integration work
+## Production integration
 
-Passing this experiment would establish a native tunnel and WebSocket transport,
-not a production PageKite replacement. Before replacing the monitor client,
-validate streamed request/response forwarding, large uploads/OTA without a
-second firmware image buffered in RAM, authentication/cookies, reconnect after
-Wi-Fi loss, long-lived WebSockets, memory under concurrent TLS clients and a
-long soak. Keep production routing unchanged until those checks pass.
+This isolated experiment predates the monitor integration. The production
+firmware now serves dashboard assets and APIs directly over HTTP/2, with shared
+authentication, bounded streaming and PSRAM allocation. See
+`../../flue-monitor/README.md` for current configuration and validation.
+Local OTA and the display WebSocket remain LAN-only by design.

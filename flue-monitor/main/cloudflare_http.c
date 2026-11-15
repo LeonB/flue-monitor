@@ -108,7 +108,11 @@ static bool decode_block(direct_request_t *r) {
   decoder_t *d = r->decoder;
   if (!d) {
     if (r->response.gzip_size < 18 || memcmp(r->response.gzip, "\x1f\x8b\x08\x00", 4)) return false;
+#if CONFIG_FLUE_DIAG_ASSETS_INTERNAL
+    d = heap_caps_calloc(1, sizeof *d, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#else
     d = buffer_memory_calloc(1, sizeof *d);
+#endif
     if (!d) return false;
     tinfl_init(&d->inflater);
     r->decoder = d;

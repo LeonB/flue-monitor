@@ -3,7 +3,6 @@
 Pass the upstream single-file miniz v1.14 source as the first argument. It uses
 the same tinfl API as ESP32 ROM. No device or credentials are used.
 """
-import ast
 import gzip
 from pathlib import Path
 import re
@@ -14,15 +13,12 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 reference = Path(sys.argv[1]).resolve()
 assert reference.is_file(), 'Pass the upstream miniz v1.14 C source'
-# Reuse the established real CommonCrypto PBKDF2 and NVS test fixture.
-tree = ast.parse((root/'tools/test_dashboard_auth.py').read_text())
-preamble = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign) and
-                any(isinstance(t, ast.Name) and t.id == 'preamble' for t in n.targets))
-crypto = 'static int64_t now;' + preamble.split('static int64_t now;', 1)[1].split('static int httpd_req_to_sockfd', 1)[0]
-peer = 'static int fake_getpeername' + preamble.split('static int fake_getpeername', 1)[1].split('static int httpd_req_get_hdr_value_str', 1)[0]
+# Shared host shims use real PBKDF2, without parsing another test's source.
+crypto = (root/'tools/host/auth_crypto.inc').read_text()
+peer = (root/'tools/host/auth_peer.inc').read_text()
 auth = re.sub(r'^#include .*$', '', (root/'main/dashboard_auth.c').read_text(), flags=re.M).replace('getpeername(', 'fake_getpeername(')
 api = (root/'main/rest_api.c').read_text()
-application = api[api.index('static bool auth_required('):api.index('#if 0')]
+application = api[api.index('static bool auth_required('):api.index('static esp_err_t auth_status_handler(')]
 application += api[api.index('static esp_err_t auth_status_handler('):api.index('// Text assets are stored')]
 application += api[api.index('static esp_err_t serve_asset('):api.index('// iOS fetches')]
 
@@ -160,6 +156,14 @@ int cft_stream_respond(cft_stream_t*s,int status,const char*type,const void*p,si
 static const char etag[]="\"123456789012345678901234\"";
 static esp_err_t asset(web_request_t*r){return serve_asset(r,"application/javascript",NULL,sizeof plaintext,etag,packed,sizeof packed,"\"gzip-etag\"");}
 static esp_err_t public_asset(web_request_t*r){return serve_asset(r,"image/png",NULL,sizeof plaintext,etag,packed,sizeof packed,"\"gzip-etag\"");}
+static esp_err_t font_asset(web_request_t*r){return serve_asset(r,"font/woff2",(const char*)plaintext,sizeof plaintext,etag,NULL,0,NULL);}
+static const web_route_t fonts[]={
+ {"/fonts/caprasimo-400.woff2",HTTP_GET,font_asset},
+ {"/fonts/figtree-variable.woff2",HTTP_GET,font_asset},
+ {"/fonts/figtree-400.woff2",HTTP_GET,font_asset},
+ {"/fonts/figtree-600.woff2",HTTP_GET,font_asset},
+ {"/fonts/figtree-700.woff2",HTTP_GET,font_asset},
+};
 static unsigned mutation_count;
 static esp_err_t mutate(web_request_t*r){mutation_count++;char*owned=buffer_memory_alloc(8);assert(owned);memcpy(owned,"changed",8);return web_send_owned(r,owned);}
 static esp_err_t reflect(web_request_t*r){char b[8192];size_t n=0;while(n<r->content_len){int got=web_recv(r,b+n,r->content_len-n);if(got<=0)return ESP_FAIL;n+=got;}return web_send(r,b,n);}
@@ -176,7 +180,9 @@ static void request(cft_stream_t*s,const char*method,const char*path,const cft_h
 }
 static void finish(cft_stream_t*s){
  assert(cloudflare_http_wait_ms(NULL)==5);cloudflare_http_poll(101);if(work)run_worker();cloudflare_http_poll(102);
- for(unsigned i=0;!s->ended&&!s->closed&&i<1000;i++){s->buffered=0;s->handlers.on_writable(s,s->ctx);}
+ for(unsigned i=0;!s->ended&&!s->closed&&i<1000;i++){
+  direct_request_t*r=s->ctx;if(r->decoder)assert(caps_for(r->decoder)==(CONFIG_FLUE_DIAG_ASSETS_INTERNAL?6:3));
+  s->buffered=0;s->handlers.on_writable(s,s->ctx);}
  assert(s->ended||s->closed);if(!s->closed)close_stream(s);
 }
 static void clean(void){assert(cloudflare_http_wait_ms(NULL)==0);assert(allocation_count==0&&live_bytes==0&&!atomic_load(&http_busy)&&!work);for(size_t i=0;i<DIRECT_REQUESTS;i++)assert(!pending[i]);}
@@ -185,11 +191,33 @@ int main(void){
  dashboard_auth_init();assert(dashboard_auth_set_password(NULL,"test-password")==ESP_OK);
  const web_route_t*reg[]={&auth_status_uri,&auth_login_uri,&auth_setup_uri,&auth_password_uri,&auth_logout_uri,&asset_route,&public_route,&mutate_route,&reflect_route};
  for(size_t i=0;i<sizeof reg/sizeof reg[0];i++)assert(web_register_handler((void*)1,reg[i])==ESP_OK);
+ for(size_t i=0;i<sizeof fonts/sizeof fonts[0];i++)assert(web_register_handler((void*)1,&fonts[i])==ESP_OK);
  // LAN still reaches the same application handler through a real native wrapper.
  httpd_req_t lan={.fd=2,.uri="/api/auth/status",.method=HTTP_GET,.user_ctx=native_routes[0].user_ctx};
  assert(native_routes[0].handler(&lan)==ESP_OK&&strstr(lan.output,"true"));
  cft_stream_t s={0};request(&s,"GET","/api/auth/status",NULL,0,NULL);finish(&s);assert(s.status==200);clean();
  s=(cft_stream_t){0};request(&s,"GET","/dashboard.js",NULL,0,NULL);finish(&s);assert(s.status==401);clean();
+ // Every retained font alias uses the same public asset/cache/streaming path.
+ for(size_t i=0;i<sizeof fonts/sizeof fonts[0];i++){
+  char uri[160];snprintf(uri,sizeof uri,"%s?v=123456789012345678901234",fonts[i].uri);
+  s=(cft_stream_t){0};request(&s,"GET",uri,NULL,0,NULL);finish(&s);
+  assert(s.status==200&&strstr(s.cache,"immutable")&&s.size==sizeof plaintext&&s.max_buffered<=512&&!memcmp(s.output,plaintext,sizeof plaintext));clean();
+  cft_header_t unchanged[]={ {"if-none-match",etag} };
+  s=(cft_stream_t){0};request(&s,"GET",fonts[i].uri,unchanged,1,NULL);finish(&s);assert(s.status==304&&!s.size);clean();
+ }
+ s=(cft_stream_t){0};request(&s,"GET","/fonts/figtree-variable.woff2?V=123456789012345678901234",NULL,0,NULL);finish(&s);assert(s.status==200&&strstr(s.cache,"immutable"));clean();
+ s=(cft_stream_t){0};request(&s,"GET","/fonts/figtree-variable.woff2?v=wrong",NULL,0,NULL);finish(&s);assert(s.status==404);clean();
+ cft_stream_t*parallel=calloc(12,sizeof *parallel);
+ for(size_t i=0;i<12;i++)request(&parallel[i],"GET",fonts[i%5].uri,NULL,0,NULL);
+ for(unsigned tick=0;tick<1000;tick++){
+  cloudflare_http_poll(101+tick);if(work)run_worker();
+  for(size_t i=0;i<12;i++)if(!parallel[i].closed){
+   if(parallel[i].ended)close_stream(&parallel[i]);
+   else {direct_request_t*r=parallel[i].ctx;if(r->started){parallel[i].buffered=0;parallel[i].handlers.on_writable(&parallel[i],r);}}
+  }
+ }
+ for(size_t i=0;i<12;i++)assert(parallel[i].closed&&parallel[i].status==200&&parallel[i].size==sizeof plaintext&&!memcmp(parallel[i].output,plaintext,sizeof plaintext));
+ free(parallel);clean();
  cft_header_t origin[]={ {"origin","https://monitor.example"} };
  s=(cft_stream_t){0};request(&s,"POST","/api/auth/login",origin,1,"{\"password\":\"test-password\",\"remember\":true}");finish(&s);
  assert(s.status==200&&strstr(s.cookie,"Secure")&&strstr(s.cookie,"Max-Age="));
@@ -262,8 +290,9 @@ with tempfile.TemporaryDirectory() as d:
     (p/'payload.inc').write_text('static const unsigned char plaintext[]={'+','.join(map(str,raw))+'};\nstatic const unsigned char packed[]={'+','.join(map(str,packed))+'};\n')
     (p/'test.c').write_text(harness)
     cjson = root/'managed_components/espressif__cjson/cJSON'
-    subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-deprecated-declarations',
+    for internal in (0, 1):
+        subprocess.run(['cc','-std=gnu11','-DCONFIG_FLUE_DIAG_ASSETS_INTERNAL='+str(internal),'-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-deprecated-declarations',
                     '-fsanitize=address,undefined','-fsanitize-address-use-after-return=always','-I'+str(p),'-I'+str(root/'main'),
                     '-I'+str(root/'components/esp_cf_tunnel/include'),'-I'+str(root.parent/'components/captive_portal/include'),
                     '-I'+str(cjson),str(p/'test.c'),str(cjson/'cJSON.c'),str(reference),'-o',str(p/'test')],check=True)
-    subprocess.run([str(p/'test')],check=True,timeout=30)
+        subprocess.run([str(p/'test')],check=True,timeout=30)

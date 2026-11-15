@@ -18,7 +18,7 @@ static const char *TAG = "settings";
 
 #define NVS_NAMESPACE "settings"
 #define NVS_KEY_LEGACY "settings_v1"
-#define NVS_KEY_BLOB  "settings_v2"  // whole settings_t as one blob -- see settings_set()'s own doc comment for why
+#define NVS_KEY_BLOB  "settings_v3"  // whole settings_t as one blob -- see settings_set()'s own doc comment for why
 
 static settings_t *s_settings;
 static SemaphoreHandle_t s_mutex;
@@ -57,8 +57,8 @@ static bool valid_color(const char color[8]) {
 
 // Bare DNS names or IPv4 addresses only: prevent protocol/header injection.
 static bool valid_host(const char *host) {
-  size_t n = strnlen(host, SETTINGS_PAGEKITE_TEXT_MAX_LEN);
-  if (!n || n >= SETTINGS_PAGEKITE_TEXT_MAX_LEN) return false;
+  size_t n = strnlen(host, SETTINGS_CLOUDFLARE_HOST_MAX_LEN);
+  if (!n || n >= SETTINGS_CLOUDFLARE_HOST_MAX_LEN) return false;
   size_t label = 0;
   for (size_t i = 0; i < n; i++) {
     char c = host[i];
@@ -123,28 +123,39 @@ void settings_init(void) {
   set_defaults(loaded);
   nvs_handle_t handle;
   if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
-    size_t len = 0;
-    const size_t legacy_size = offsetof(settings_t, cloudflare);
-    // Leave the old blob untouched so an app rollback still has its settings.
-    const char *key = NVS_KEY_BLOB;
-    if (nvs_get_blob(handle, key, NULL, &len) != ESP_OK) key = NVS_KEY_LEGACY;
-    if (nvs_get_blob(handle, key, NULL, &len) == ESP_OK &&
-        (len == sizeof(settings_t) || len == legacy_size ||
-         len == legacy_size + 16 || len == legacy_size + 20 ||
-         len == offsetof(settings_t, pagekite) + offsetof(pagekite_settings_t, custom_domain) ||
-         len == offsetof(settings_t, zone_cold_color) ||
-         len == offsetof(settings_t, breathing_exponent) ||
-         len == offsetof(settings_t, maximum_brightness) ||
-         len == offsetof(settings_t, pagekite))) {
-      void *stored = buffer_memory_calloc(1, len);
-      if (!stored) abort();
-      size_t read_len = len;
-      if (nvs_get_blob(handle, key, stored, &read_len) == ESP_OK && read_len == len) {
-        memcpy(loaded, stored, len == sizeof(settings_t) ? len : (len < legacy_size ? len : legacy_size));
-        if (!validate(loaded)) set_defaults(loaded);
+    // New writes omit the retired tunnel block. Keep previous keys untouched
+    // so rollback images retain their own layout and credentials.
+    const size_t prefix = offsetof(settings_t, cloudflare);
+    const size_t old_cloudflare = prefix + 516;
+    const char *keys[] = {NVS_KEY_BLOB, "settings_v2", NVS_KEY_LEGACY};
+    for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+      size_t len = 0;
+      if (nvs_get_blob(handle, keys[i], NULL, &len) != ESP_OK) continue;
+      bool current = i == 0;
+      bool full_old = len == old_cloudflare + sizeof(cloudflare_settings_t);
+      bool supported = current ? len == sizeof(settings_t) :
+          full_old || len == old_cloudflare || len == old_cloudflare + 16 ||
+          len == old_cloudflare + 20 || len == prefix + 388 || len == prefix ||
+          len == offsetof(settings_t, zone_cold_color) ||
+          len == offsetof(settings_t, breathing_exponent) ||
+          len == offsetof(settings_t, maximum_brightness);
+      if (supported) {
+        void *stored = buffer_memory_calloc(1, len);
+        if (!stored) abort();
+        size_t read_len = len;
+        if (nvs_get_blob(handle, keys[i], stored, &read_len) == ESP_OK && read_len == len) {
+          if (current) memcpy(loaded, stored, len);
+          else {
+            memcpy(loaded, stored, len < prefix ? len : prefix);
+            if (full_old) memcpy(&loaded->cloudflare, (char *)stored + old_cloudflare,
+                                 sizeof loaded->cloudflare);
+          }
+          if (!validate(loaded)) set_defaults(loaded);
+        }
+        memset(stored, 0, len);
+        free(stored);
       }
-      memset(stored, 0, len);
-      free(stored);
+      break; // An invalid current blob must not resurrect stale settings.
     }
     nvs_close(handle);
   }

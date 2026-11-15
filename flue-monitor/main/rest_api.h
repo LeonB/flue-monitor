@@ -1,7 +1,6 @@
 #pragma once
 
 #include "esp_http_server.h"
-#include "cf_tunnel.h"
 
 #include "sensors.h"
 
@@ -35,9 +34,6 @@ extern "C" {
 // register their own endpoints onto the same server instead of each
 // starting their own (only one httpd can bind port 80 at a time).
 httpd_handle_t rest_api_start(void);
-
-// Tunnel-task-only fast path for already-public font resources.
-bool rest_api_tunnel_font(cft_stream_t *stream, const char *uri);
 
 // Queue direct HTTP/2 application handling on the same task as native HTTP.
 esp_err_t rest_api_queue_work(httpd_work_fn_t work, void *arg);

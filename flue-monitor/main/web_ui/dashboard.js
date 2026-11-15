@@ -274,15 +274,6 @@ function app() {
     },
 
     async fetchCloudflareStatus() {
-      // Local-only visual states for tools/mock_server.py previews. This lets
-      // us inspect the UI against an already-running mock process without
-      // changing or flashing firmware.
-      const previewState = location.hostname === 'localhost'
-        ? new URLSearchParams(location.search).get('cloudflare-preview-status') : null;
-      if (previewState && ['connected', 'connecting', 'auth_error', 'network_error', 'unavailable'].includes(previewState)) {
-        this.cloudflareStatus = { state: previewState, retry_in_s: 16 };
-        return;
-      }
       try {
         const res = await this.authorizedFetch('/api/cloudflare/status', { cache: 'no-store', signal: AbortSignal.timeout(3000) });
         if (!res.ok) throw new Error('unavailable');
@@ -314,10 +305,6 @@ function app() {
       try {
         const res = await this.authorizedFetch('/api/settings');
         this.settings = { cloudflare_token: '', cloudflare_connections: 1, minimum_brightness: 20, maximum_brightness: 255, breathing_exponent: DEFAULT_BREATHING_EXPONENT, ...Object.fromEntries(ZONE_ORDER.map((zone) => [`zone_${zone}_color`, DEFAULT_ZONE_COLORS[zone]])), ...await res.json() };
-        if (location.hostname === 'localhost' && new URLSearchParams(location.search).has('cloudflare-preview-status')) {
-          this.settings.cloudflare_enabled = true;
-          this.settings.cloudflare_hostname ||= 'cf-test.example.nl';
-        }
         this.draft = { ...this.settings };
       } catch (e) { /* keeps whatever was loaded before, if anything */ }
     },

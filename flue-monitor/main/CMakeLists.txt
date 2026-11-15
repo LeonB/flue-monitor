@@ -11,7 +11,7 @@ set(WEB_ASSET_HEADER "${CMAKE_CURRENT_BINARY_DIR}/web_assets_generated.h")
 add_custom_command(OUTPUT "${WEB_ASSET_HEADER}"
                    COMMAND "${PYTHON}" "${CMAKE_CURRENT_LIST_DIR}/../tools/generate_web_assets.py" "${WEB_ASSET_HEADER}"
                    DEPENDS "${CMAKE_CURRENT_LIST_DIR}/../tools/generate_web_assets.py"
-                           "${CMAKE_CURRENT_LIST_DIR}/rest_api.c"
+                           web_ui/login.html
                            web_ui/flue-icon-stove.svg
                            web_ui/favicon.ico
                            web_ui/apple-touch-icon.png
@@ -33,7 +33,7 @@ add_custom_command(OUTPUT "${WEB_ASSET_HEADER}"
                            web_ui/startup-1320x2868.png
                            web_ui/startup-1260x2736.png
                            web_ui/startup-1080x2340.png
-                           web_ui/dashboard.html web_ui/dashboard.js web_ui/dashboard.css
+                           web_ui/dashboard.html web_ui/dashboard.js
                            web_ui/burn-graph.js web_ui/vendor/uplot.min.js web_ui/vendor/uplot.min.css
                            "${CMAKE_CURRENT_LIST_DIR}/../../components/captive_portal/alpine.min.js"
                            "${CMAKE_CURRENT_LIST_DIR}/../../components/captive_portal/styles.css"

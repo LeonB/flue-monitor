@@ -47,6 +47,7 @@ typedef int SemaphoreHandle_t;
 static unsigned char stored[16384];
 static size_t stored_len;
 static unsigned char stored_v2[16384];static size_t stored_v2_len;
+static unsigned char stored_v3[16384];static size_t stored_v3_len;
 static unsigned writes, wakes;
 static bool fail_body_alloc;
 static int alloc_calls, fail_alloc_at;
@@ -55,8 +56,14 @@ static int xSemaphoreCreateMutex(void) {return 1;}
 static void xSemaphoreTake(int a,int b) {(void)a;(void)b;}
 static void xSemaphoreGive(int a) {(void)a;}
 static int nvs_open(const char *a,int b,int *c) {(void)a;(void)b;*c=1;return ESP_OK;}
-static int nvs_get_blob(int a,const char *b,void *c,size_t *n) {(void)a;(void)b;unsigned char *data=!strcmp(b,"settings_v2")?stored_v2:stored;size_t len=!strcmp(b,"settings_v2")?stored_v2_len:stored_len;if(!len)return ESP_FAIL;if(!c){*n=len;return ESP_OK;}if(*n<len)return ESP_FAIL;memcpy(c,data,len);*n=len;return ESP_OK;}
-static int nvs_set_blob(int a,const char *b,const void *c,size_t n) {(void)a;(void)b;assert(!strcmp(b,"settings_v2") && n<=sizeof stored_v2);memcpy(stored_v2,c,n);stored_v2_len=n;writes++;return ESP_OK;}
+static int nvs_get_blob(int a,const char *key,void *out,size_t *n) {
+ (void)a;unsigned char *data=!strcmp(key,"settings_v3")?stored_v3:!strcmp(key,"settings_v2")?stored_v2:stored;
+ size_t len=!strcmp(key,"settings_v3")?stored_v3_len:!strcmp(key,"settings_v2")?stored_v2_len:stored_len;
+ if(!len)return ESP_FAIL;if(!out){*n=len;return ESP_OK;}if(*n<len)return ESP_FAIL;memcpy(out,data,len);*n=len;return ESP_OK;
+}
+static int nvs_set_blob(int a,const char *key,const void *out,size_t n) {
+ (void)a;assert(!strcmp(key,"settings_v3")&&n<=sizeof stored_v3);memcpy(stored_v3,out,n);stored_v3_len=n;writes++;return ESP_OK;
+}
 static int nvs_commit(int a) {(void)a;return ESP_OK;}
 static void nvs_close(int a) {(void)a;}
 typedef struct {size_t content_len;void *user_ctx;const char *input;int received,status;char response[4096];} httpd_req_t;
@@ -90,21 +97,32 @@ int main(void) {
  (void)TAG;(void)esp_err_to_name;
  settings_t legacy;set_defaults(&legacy);legacy.log_heartbeat_min=87;
  strcpy(legacy.google_sheets_secret,"preserve-sheets");strcpy(legacy.zone_cold_color,"#fab100");
- legacy.pagekite.enabled=1;strcpy(legacy.pagekite.secret,"old-private-pagekite");
- const size_t sizes[]={offsetof(settings_t,cloudflare),offsetof(settings_t,cloudflare)+16,
-   offsetof(settings_t,cloudflare)+20,offsetof(settings_t,pagekite),
-   offsetof(settings_t,pagekite)+offsetof(pagekite_settings_t,custom_domain)};
- for(size_t i=0;i<sizeof sizes/sizeof sizes[0];i++) {
-   stored_v2_len=0;memset(stored,0,sizeof stored);memcpy(stored,&legacy,offsetof(settings_t,cloudflare)<sizes[i]?offsetof(settings_t,cloudflare):sizes[i]);
-   stored_len=sizes[i];settings_init();settings_t c;settings_get(&c);
-   assert(c.log_heartbeat_min==87 && !strcmp(c.google_sheets_secret,"preserve-sheets"));
-   assert(!strcmp(c.zone_cold_color,"#fab100") && !c.cloudflare.enabled && c.cloudflare.connections==1 && !*c.cloudflare.token);
+ const size_t prefix=260,old_cf=776,old_size=5008;
+ assert(offsetof(settings_t,cloudflare)==prefix&&sizeof(settings_t)==4492);
+ const size_t sizes[]={old_cf,old_cf+16,old_cf+20,prefix,prefix+388,
+   offsetof(settings_t,zone_cold_color),offsetof(settings_t,breathing_exponent),offsetof(settings_t,maximum_brightness)};
+ for(unsigned key=0;key<2;key++)for(size_t i=0;i<sizeof sizes/sizeof sizes[0];i++) {
+   stored_v3_len=stored_v2_len=stored_len=0;
+   unsigned char*dest=key?stored_v2:stored;size_t*len=key?&stored_v2_len:&stored_len;
+   memset(dest,0,16384);memcpy(dest,&legacy,sizes[i]<prefix?sizes[i]:prefix);*len=sizes[i];
+   settings_init();settings_t migrated;settings_get(&migrated);
+   assert(migrated.log_heartbeat_min==87&&!strcmp(migrated.google_sheets_secret,"preserve-sheets"));
+   if(sizes[i]>=offsetof(settings_t,breathing_exponent))assert(!strcmp(migrated.zone_cold_color,"#fab100"));
+   assert(!migrated.cloudflare.enabled&&migrated.cloudflare.connections==1&&!*migrated.cloudflare.token);
  }
- settings_t c;settings_get(&c);c.cloudflare.enabled=1;c.cloudflare.connections=4;
+ // Exact deployed v2 layout: the removed 516-byte block is never copied.
+ settings_t c=legacy;c.cloudflare.enabled=1;c.cloudflare.connections=4;
  strcpy(c.cloudflare.hostname,"cf-test.example.nl");strcpy(c.cloudflare.token,"eyJ0ZXN0IjoiZHVtbXkifQ==");
- unsigned char legacy_copy[16384];memcpy(legacy_copy,stored,stored_len);
- assert(settings_set(&c)==ESP_OK);assert(!memcmp(legacy_copy,stored,stored_len) && stored_v2_len==sizeof c);settings_init();settings_t restored;settings_get(&restored);
+ memset(stored_v2,0,sizeof stored_v2);memcpy(stored_v2,&c,prefix);
+ memset(stored_v2+prefix,0xa5,516);memcpy(stored_v2+old_cf,&c.cloudflare,sizeof c.cloudflare);
+ stored_v2_len=old_size;stored_v3_len=0;settings_init();settings_t restored;settings_get(&restored);
  assert(!memcmp(&c,&restored,sizeof c));
+ unsigned char previous[5008];memcpy(previous,stored_v2,old_size);
+ assert(settings_set(&c)==ESP_OK&&stored_v3_len==sizeof c&&!memcmp(previous,stored_v2,old_size));
+ settings_init();settings_get(&restored);assert(!memcmp(&c,&restored,sizeof c));
+ // Unsupported/truncated v3 must not silently resurrect an older valid v2.
+ stored_v3_len--;settings_init();settings_get(&restored);assert(restored.log_heartbeat_min==DEFAULT_LOG_HEARTBEAT_MIN&&!restored.cloudflare.enabled);
+ assert(settings_set(&c)==ESP_OK);settings_init();
  cloudflare_settings_t cf;settings_get_cloudflare(&cf);assert(!memcmp(&cf,&c.cloudflare,sizeof cf));
  for(unsigned i=0;i<=5;i++){cloudflare_settings_t x=cf;x.connections=i;assert(valid_cloudflare(&x)==(i>=1 && i<=4));}
  const char *bad[]={"https://bad.example","bad.example/path","bad\r\nHost: x","bad..host","-bad.host","bad-.host"};
@@ -113,9 +131,9 @@ int main(void) {
  memset(invalid.token,'x',sizeof invalid.token);assert(!valid_cloudflare(&invalid));
  for(int remote=0;remote<=1;remote++) {
    httpd_req_t request={.user_ctx=remote?(void *)1:NULL};settings_get_handler(&request);assert(request.status==200);
-   assert(!strstr(request.response,c.cloudflare.token) && !strstr(request.response,"old-private-pagekite"));
+   assert(!strstr(request.response,c.cloudflare.token));
    cJSON *j=cJSON_Parse(request.response);assert(j && cJSON_IsTrue(cJSON_GetObjectItem(j,"cloudflare_token_set")));
-   assert(!cJSON_GetObjectItem(j,"cloudflare_token") && !cJSON_GetObjectItem(j,"pagekite_enabled"));
+   assert(!cJSON_GetObjectItem(j,"cloudflare_token"));
    if(remote)assert(!cJSON_GetObjectItem(j,"google_sheets_secret"));
    cJSON_AddStringToObject(j,"cloudflare_token","");write_api(j,remote,200);
    cJSON_DeleteItemFromObject(j,"cloudflare_token");write_api(j,remote,200);cJSON_Delete(j);
@@ -133,7 +151,7 @@ int main(void) {
  httpd_req_t device={0};settings_get_handler(&device);assert(device.status==200 && !strstr(device.response,"preserve-sheets"));
  write_api(j,false,401);write_api(j,true,401);configured=false;write_api(j,true,401);write_api(j,false,200);cJSON_Delete(j);
  fail_body_alloc=true;httpd_req_t oom={.content_len=2,.input="{}"};before=writes;settings_post_handler(&oom);assert(oom.status==500 && writes==before && !oom.received);fail_body_alloc=false;
- puts("PASS: legacy NVS/panel tails, unchanged credentials, Cloudflare persistence, 1–4 validation, host/token injection rejection, LAN/public redaction, blank/omitted token preservation, reconfiguration, auth and allocation failure");
+ puts("PASS: v1/v2 migration, v3 roundtrip/corruption, preserved old blobs, unchanged credentials, Cloudflare persistence, 1–4 validation, host/token injection rejection, LAN/public redaction, blank/omitted token preservation, reconfiguration, auth and allocation failure");
  return 0;
 }
 '''

@@ -1,5 +1,56 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-15 audit cleanup and retired tunnel removal DEPLOYED
+
+Owner approved the audit's small simplifications and explicitly requested all
+remaining PageKite code removed. Removed prototype scripts/C/README, runtime
+settings fields, active documentation and test-domain references. Historical
+entries below remain diagnostic history. Recorder event IDs9..11 retired without
+renumbering later events (NVS_BEGIN stays12). Settings_t shrank5008->4492B.
+New saves use settings_v3; v1/v2 imports skip the retired516-byte region and
+preserve the original Cloudflare token/hostname/connections plus sensor/display/
+Sheets settings. Older keys stay untouched for rollback; no settings save was
+performed on hardware merely to force a new-format write. Migration and v3
+save/reload/corrupt-length behaviour tested with fixed deployed offsets on host.
+
+Fonts now use the same web_request/HTTP2 dispatcher and512B streaming as all
+other assets. All five old font URLs retained; Figtree aliases share one handler.
+The old fast-path's accepted uppercase V version query remains supported for
+tunnel fonts. Duplicate font streaming/cache helper and its isolated test removed;
+coverage moved to actual direct-bridge tests, including12 concurrent fonts.
+Accept-Encoding parser now shared across LAN and tunnel. Diagnostic internal
+asset-buffer switch also honoured by direct decoder (tested both configurations).
+Only one CSS source remains, shared by device generation, preview and checks.
+Login template moved from disabled C to web_ui/login.html. Generated login and
+CSS bytes unchanged; dashboard JS changes remove localhost-only preview logic,
+and dashboard HTML changes only its JS version reference. Mock-server status
+configuration preserves previews. Explicit host/auth_crypto.inc and auth_peer.inc
+fixtures replace parsing another test's source; legacy native fixture adapter
+remains for existing tests, without a test-framework rewrite.
+
+15 test programs passed, including ASan/UBSan direct/auth/migration tests, graph,
+service worker, display acknowledgement, Bosch, asset bytes/versions/decoding,
+HTTP/OTA/history and recorder tests. Actual ROM-compatible decoding reference
+/tmp/flue-miniz-v114.c. Monitor build with IDF6.0.3 passed. Display build could
+not run: activation refers to absent SDK5.5.5; only6.0.3 is installed. Shared
+parser compiled/tested for strict monitor PSRAM and internal-only display mode;
+no display hardware flash or unsupported SDK upgrade attempted.
+
+Image1513888B,848B smaller than9bed160's deployed image; OTA free22112B.
+SHA25663d971ec8fde0f99be86797ad916a930148bb5c39d5646d3abb5dd925a1412e7.
+Frozen bin/ELF/map/actual sdkconfig/source/build+host logs:
+.cache/cleanup/63d971ec8fde0f99/. OTA succeeded on monitor192.168.1.137;
+UTC graph backup/independent restore readback preserved360samples/14events at
+.cache/ota-history/20261115T215430469511Z/. All21 redacted settings fields
+unchanged (boot-randomized revision excluded).64 public asset/security checks
+passed;36requests at concurrency12 included fonts and icons, all200.
+Chrome authenticated login, live sensor/room temperature/display Wi-Fi, drawn
+graph, Bosch status and saved tuning confirmed; tunnel reports4/4 connections.
+No settings changed in browser. Hardware results in frozen directory. No USB
+opened, watchdog monitoring not restarted. Owner requested committing this
+cleanup; nothing pushed.
+
+
 ## 2026-11-15 direct HTTP/2 assets and API DEPLOYED
 
 Owner requested remaining assets and dashboard API directly over HTTP/2. Added

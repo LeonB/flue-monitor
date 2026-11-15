@@ -33,43 +33,7 @@ typedef int esp_err_t;
 typedef int nvs_handle_t;
 typedef struct {int fd;const char *cookie,*host,*origin;const char *set_cookie;} httpd_req_t;
 bool dashboard_auth_is_remote(httpd_req_t *req);
-static int64_t now;
-static unsigned char blob[256];
-static size_t blob_size;
-static bool fail_hash, fail_nvs;
-static int64_t esp_timer_get_time(void) {return now;}
-static void esp_fill_random(void *out,size_t n) {arc4random_buf(out,n);}
-typedef int psa_status_t;
-#define PSA_SUCCESS 0
-#define PSA_ALG_SHA_256 1
-#define PSA_ALG_PBKDF2_HMAC(x) (x)
-#define PSA_KEY_DERIVATION_INPUT_COST 1
-#define PSA_KEY_DERIVATION_INPUT_SALT 2
-#define PSA_KEY_DERIVATION_INPUT_PASSWORD 3
-#define PSA_KEY_DERIVATION_OPERATION_INIT {0}
-typedef struct {const unsigned char *password,*salt;size_t password_len,salt_len;unsigned rounds;int step;} psa_key_derivation_operation_t;
-static int psa_key_derivation_setup(psa_key_derivation_operation_t *o,int alg) {assert(alg==PSA_ALG_SHA_256);o->step=1;return fail_hash?-1:0;}
-static int psa_key_derivation_input_integer(psa_key_derivation_operation_t *o,int kind,uint64_t rounds) {assert(kind==PSA_KEY_DERIVATION_INPUT_COST && o->step==1);o->rounds=rounds;o->step=2;return 0;}
-static int psa_key_derivation_input_bytes(psa_key_derivation_operation_t *o,int kind,const unsigned char *p,size_t n) {
- if(kind==PSA_KEY_DERIVATION_INPUT_SALT){assert(o->step==2);o->salt=p;o->salt_len=n;o->step=3;}
- else {assert(kind==PSA_KEY_DERIVATION_INPUT_PASSWORD && o->step==3);o->password=p;o->password_len=n;o->step=4;}return 0;
-}
-static int psa_key_derivation_output_bytes(psa_key_derivation_operation_t *o,unsigned char *out,size_t n) {
- assert(o->step==4);return CCKeyDerivationPBKDF(kCCPBKDF2,(const char *)o->password,o->password_len,o->salt,o->salt_len,kCCPRFHmacAlgSHA256,o->rounds,out,n);
-}
-static int psa_key_derivation_abort(psa_key_derivation_operation_t *o) {memset(o,0,sizeof(*o));return 0;}
-static int nvs_open(const char *a,int b,int *c) {(void)a;(void)b;*c=1;return fail_nvs?ESP_FAIL:ESP_OK;}
-static int nvs_get_blob(int a,const char *b,void *out,size_t *n) {(void)a;(void)b;if(!blob_size||*n<blob_size)return ESP_FAIL;memcpy(out,blob,blob_size);*n=blob_size;return ESP_OK;}
-static int nvs_set_blob(int a,const char *b,const void *out,size_t n) {(void)a;(void)b;assert(n<=sizeof blob);memcpy(blob,out,n);blob_size=n;return ESP_OK;}
-static int nvs_commit(int a) {(void)a;return ESP_OK;}
-static void nvs_close(int a) {(void)a;}
-static int httpd_req_to_sockfd(httpd_req_t *r) {return r->fd;}
-static int fake_getpeername(int fd,struct sockaddr *out,socklen_t *n) {
- if(!fd)return -1;
- if(fd==3 || fd==4){struct sockaddr_in6 *p=(struct sockaddr_in6 *)out;p->sin6_family=AF_INET6;inet_pton(AF_INET6,fd==3?"::ffff:192.168.1.34":"::ffff:127.0.0.1",&p->sin6_addr);*n=sizeof *p;return 0;}
- struct sockaddr_in *p=(struct sockaddr_in *)out;p->sin_family=AF_INET;p->sin_addr.s_addr=htonl(fd==1?0x7f000001:0xc0a80122);*n=sizeof *p;return 0;
-}
-static int httpd_req_get_hdr_value_str(httpd_req_t *r,const char *key,char *out,size_t n) {
+''' + (root/'tools/host/auth_crypto.inc').read_text() + 'static int httpd_req_to_sockfd(httpd_req_t *r) {return r->fd;}\n' + (root/'tools/host/auth_peer.inc').read_text() + r'''static int httpd_req_get_hdr_value_str(httpd_req_t *r,const char *key,char *out,size_t n) {
  const char *p=!strcmp(key,"Cookie")?r->cookie:!strcmp(key,"Host")?r->host:r->origin;
  if(!p||strlen(p)>=n)return ESP_FAIL;strcpy(out,p);return ESP_OK;
 }
@@ -84,10 +48,10 @@ static bool any_session(void) {
  return false;
 }
 int main(void) {
- httpd_req_t remote={.fd=1,.host="demo.pagekite.me",.origin="https://demo.pagekite.me"};
+ httpd_req_t remote={.fd=1,.host="monitor.example.com",.origin="https://monitor.example.com"};
  httpd_req_t local={.fd=2,.host="192.168.1.137",.origin="http://192.168.1.137"};
  assert(dashboard_auth_is_remote(&remote) && !dashboard_auth_is_remote(&local));
- remote.host="192.168.1.137";assert(dashboard_auth_is_remote(&remote));remote.host="demo.pagekite.me";
+ remote.host="192.168.1.137";assert(dashboard_auth_is_remote(&remote));remote.host="monitor.example.com";
  httpd_req_t mapped_local={.fd=3},mapped_remote={.fd=4};assert(!dashboard_auth_is_remote(&mapped_local));assert(dashboard_auth_is_remote(&mapped_remote));
  dashboard_auth_init();assert(!dashboard_auth_is_configured() && !dashboard_auth_check(&remote));
  assert(dashboard_auth_set_password(NULL,"short")==ESP_ERR_INVALID_ARG);
@@ -101,8 +65,8 @@ int main(void) {
  char forged[128];snprintf(forged,sizeof forged,"x%s",valid);remote.cookie=forged;assert(!dashboard_auth_check(&remote));
  snprintf(forged,sizeof forged,"%sx",valid);remote.cookie=forged;assert(!dashboard_auth_check(&remote));
  snprintf(forged,sizeof forged,"other=abc; %s; extra=1",valid);remote.cookie=forged;assert(dashboard_auth_check(&remote));
- assert(dashboard_auth_check_csrf(&remote));remote.origin="https://demo.pagekite.me.evil";assert(!dashboard_auth_check_csrf(&remote));
- remote.origin="ftp://demo.pagekite.me";assert(!dashboard_auth_check_csrf(&remote));remote.origin="http://demo.pagekite.me";assert(!dashboard_auth_check_csrf(&remote));
+ assert(dashboard_auth_check_csrf(&remote));remote.origin="https://monitor.example.com.evil";assert(!dashboard_auth_check_csrf(&remote));
+ remote.origin="ftp://monitor.example.com";assert(!dashboard_auth_check_csrf(&remote));remote.origin="http://monitor.example.com";assert(!dashboard_auth_check_csrf(&remote));
  remote.origin=NULL;assert(!dashboard_auth_check_csrf(&remote));assert(dashboard_auth_check_csrf(&local));
  // The configured public hostname may be 127 characters long.
  const char *saved_host=remote.host;char long_host[128],long_origin[160];

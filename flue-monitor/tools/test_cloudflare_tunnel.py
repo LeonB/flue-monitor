@@ -54,7 +54,6 @@ static void *buffer_memory_calloc(size_t n,size_t size){return calloc(n,size);}
 struct cft_tunnel { int dummy; };
 struct cft_stream {bool direct;int response;char service[40];const char *type;cft_stream_handlers_t handlers;void *ctx;bool paused;};
 static const cft_transport_ops_t cft_transport_esp={0};
-static bool rest_api_tunnel_font(cft_stream_t *s,const char *uri){(void)s;(void)uri;return false;}
 static void cloudflare_http_request(cft_stream_t*s,const cft_request_t*r,int64_t now){assert(r->path&&now);s->direct=true;}
 static void cloudflare_http_poll(int64_t now){assert(now);}
 static uint32_t cloudflare_http_wait_ms(void*arg){(void)arg;return 0;}

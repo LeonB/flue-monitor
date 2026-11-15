@@ -11,16 +11,6 @@ extern "C" {
 #define SETTINGS_SHEETS_URL_MAX_LEN     128
 #define SETTINGS_SHEETS_SECRET_MAX_LEN  64
 
-#define SETTINGS_PAGEKITE_TEXT_MAX_LEN 128
-// Historical NVS prefix only. Retain layout for migration; no active client.
-typedef struct {
-  uint32_t enabled;
-  char domain[SETTINGS_PAGEKITE_TEXT_MAX_LEN];
-  char relay[SETTINGS_PAGEKITE_TEXT_MAX_LEN]; // legacy NVS field; relay selection is automatic
-  char secret[SETTINGS_PAGEKITE_TEXT_MAX_LEN];
-  char custom_domain[SETTINGS_PAGEKITE_TEXT_MAX_LEN]; // optional CNAME host, registered alongside the PageKite hostname
-} pagekite_settings_t;
-
 #define SETTINGS_CLOUDFLARE_HOST_MAX_LEN 128
 #define SETTINGS_CLOUDFLARE_TOKEN_MAX_LEN 4096
 typedef struct {
@@ -57,7 +47,6 @@ typedef struct {
   float breathing_exponent;  // 0.3..3.0; 1.0 preserves the original envelope
   uint32_t maximum_brightness; // 0..255, must be >= minimum
   uint32_t minimum_brightness; // 0..255, LED channel floor
-  pagekite_settings_t pagekite; // legacy storage prefix only; no PageKite client
   cloudflare_settings_t cloudflare;
 } settings_t;
 

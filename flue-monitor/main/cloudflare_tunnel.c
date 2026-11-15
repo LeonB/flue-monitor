@@ -78,7 +78,6 @@ static void on_request(void *arg, cft_stream_t *stream, const cft_request_t *req
       cft_stream_respond(stream, 400, "text/plain", "GET body not supported\n", 23);
       return;
     }
-    if (rest_api_tunnel_font(stream, req->path)) return;
   }
   cloudflare_http_request(stream, req, esp_timer_get_time());
 }
