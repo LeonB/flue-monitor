@@ -1,4 +1,4 @@
-// Select a recent burn, merging cold interruptions shorter than 30 minutes.
+// Start at the recent burn and keep its cooling tail visible through now.
 function burnHistoryRange(samples, cold, now) {
   const recent = 3 * 3600, pause = 30 * 60, padding = 15 * 60;
   let latest = null, current = null, coldSince = null;
@@ -21,14 +21,13 @@ function burnHistoryRange(samples, cold, now) {
   }
   if (!latest || now - latest.end > recent) return { min: now - recent, max: now };
   const min = Math.max(samples[0][0], latest.start - padding);
-  const max = Math.min(now, latest.end + padding);
-  return { min: Math.min(min, max - 600), max };
+  return { min: Math.min(min, now - 600), max: now };
 }
 
 // uPlot 1.6.32; keep the chart outside Alpine's reactive proxy.
 function burnGraph() {
   let plot, observer, anchor, samples = [], events = [], palette, bounds;
-  let chartHost, tooltip, lastHistory, defaultRange, manualRange = false;
+  let chartHost, tooltip, lastHistory, defaultRange, manualRange = false, automaticRange = false;
   const rangeClock = (s) => new Date(s * 1000).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
   const clock = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return {
@@ -164,7 +163,7 @@ function burnGraph() {
             setScale: [(u, key) => {
               if (key !== 'x') return;
               if (!u.scales.x.min || !u.scales.x.max) return;
-              if (plot) manualRange = true;
+              if (plot && !automaticRange) manualRange = true;
               this.visibleRange = `${rangeClock(u.scales.x.min)} – ${rangeClock(u.scales.x.max)}`;
             }]
           }
@@ -220,7 +219,11 @@ function burnGraph() {
     },
     resetRange() {
       if (!plot) return;
-      plot.setScale('x', { ...defaultRange });
+      // uPlot normally defers scale hooks. Commit inside this guard so our own
+      // range update cannot later be mistaken for a user's zoom or pan.
+      automaticRange = true;
+      try { plot.batch(p => p.setScale('x', { ...defaultRange })); }
+      finally { automaticRange = false; }
       manualRange = false;
     }
   };

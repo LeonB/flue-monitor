@@ -1,5 +1,47 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-15 recent-session cooling tail now follows current time
+
+Owner clarified graph must reach current time even after the recent session has
+ended. Prior16be2e3 fixed asynchronous uPlot manualRange freeze, but range policy
+still capped completed sessions at end+15min. Changed burnHistoryRange max to now
+for every recent session, retaining15min pre-start padding,30min cold-gap merging
+and3h recency/fallback. No session threshold changes. Updated completed-session
+expectations and added regression for ended/cooling session continuing to follow.
+Graph tests and asset/hash/cache tests pass; firmware builds. Frozen image/source
+and ELF/map/actual sdkconfig .cache/graph-cooling-follow/1c3b4f3b819b30f1/.
+OTA accepted and Mac UTC backup/restore verified after restart; artifacts
+.cache/ota-history/20261115T202920868843Z/. The graph now ends at current time.
+Not committed. Owner was told previous repair missed this requested behavior.
+
+
+## 2026-11-15 graph automatic-follow fix DEPLOYED
+
+Owner reported graph not moving to latest active-session data. Root cause:
+uPlot1.6.32 defers setScale hooks through queueMicrotask; resetRange cleared
+manualRange before hook fired, which then incorrectly set manualRange=true.
+Prior test mock invoked hooks synchronously, hiding the bug. Changed resetRange
+to guarded plot.batch commit, so automatic hooks run under automaticRange flag;
+user drag/wheel/touch retain manual range, reset resumes following.
+
+Updated test_burn_graph.js uses deferred commit mock; failed before fix and
+passed after. Chrome using actual bundled uPlot and controlled advancing clock:
+old code fails live-follow and resume-after-reset, manual zoom passes; fixed
+passes all three. Local fixture /tmp/flue-graph-browser-check.py port8879.
+Asset-version/actual handler/cache and graph tests passed; firmware build passed.
+Image1511776B,24224B free; frozen bin/ELF/map/sdkconfig/source/test and browser
+results .cache/graph-follow/0386926e37403975/. OTA accepted, UTC backup and
+restore verified .cache/ota-history/20261115T202350685038Z/ (360samples,13events).
+Not committed/pushed. Prior PNG optimization was committed65c5138.
+
+Live settings threshold125C; pre-OTA snapshot last56C (114s old). Latest burn
+ended105minutes before snapshot according to current rules; it is recent but
+NOT still active. Thus default graph should show completed-burn end+15min,
+not necessarily present time. Told owner both this and the separate fixed bug.
+No thresholds or session detection changed. Original direct HTTP2 remaining
+assets/API work still pending.
+
+
 ## 2026-11-14 lossless PNG flash reduction DEPLOYED
 
 Owner requested firmware storage reduction and authorized access; prior autonomous
