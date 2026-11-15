@@ -2,9 +2,10 @@
 import subprocess
 import tempfile
 from pathlib import Path
+from web_test_shim import native_source
 
 root = Path(__file__).resolve().parents[1]
-api = (root / 'main/rest_api.c').read_text()
+api = native_source((root / 'main/rest_api.c').read_text(), tunnel='false')
 auth = api[api.index('static esp_err_t auth_form_handler('):api.index('static const httpd_uri_t auth_login_uri')]
 ota_source = (root.parent / 'components/ota_server/ota_server.c').read_text()
 export = ota_source[ota_source.index('static esp_err_t history_export_handler('):ota_source.index('static esp_err_t history_restore_handler(')]
@@ -37,7 +38,7 @@ typedef int esp_err_t;
 #define ESP_LOGW(tag,...) ((void)(tag), (void)snprintf(NULL,0,__VA_ARGS__))
 #define ESP_LOGE(tag,...) ((void)(tag), (void)snprintf(NULL,0,__VA_ARGS__))
 #define pdMS_TO_TICKS(x) (x)
-typedef struct {const char *uri,*input;int content_len,received,status;} httpd_req_t;
+typedef struct {const char *uri,*input;size_t content_len;int received,status;} httpd_req_t;
 static const char *TAG="test";
 static bool fail_alloc,fail_read,timeout_once;
 static esp_err_t (*s_restore_history)(const char *,size_t);
@@ -57,7 +58,7 @@ static int httpd_req_recv(httpd_req_t *r,char *out,int amount) {
  reads++;if(timeout_once){timeout_once=false;return HTTPD_SOCK_ERR_TIMEOUT;}
  if(fail_read)return -1;
  if(amount>137)amount=137; // force fragmented reads
- assert(r->received+amount<=r->content_len);
+ assert((size_t)(r->received+amount)<=r->content_len);
  memcpy(out,r->input+r->received,amount);r->received+=amount;return amount;
 }
 static int httpd_resp_send_err(httpd_req_t *r,int code,const char *text) {(void)text;r->status=code;return ESP_FAIL;}

@@ -4,6 +4,7 @@ Requires an existing ESP-IDF build (uses its cJSON dependency).
 """
 import json
 from pathlib import Path
+from web_test_shim import native_source
 import re
 import subprocess
 import tempfile
@@ -16,7 +17,7 @@ if not cjson.exists():
 header = (root / 'main/settings.h').read_text().replace('#pragma once', '').replace('#include "esp_err.h"', '')
 config = (root / 'main/config.h').read_text().replace('#pragma once', '')
 settings = re.sub(r'^#include .*$','', (root / 'main/settings.c').read_text(), flags=re.M)
-api = (root / 'main/rest_api.c').read_text()
+api = native_source((root / 'main/rest_api.c').read_text(), tunnel='req->user_ctx')
 serialization = api[api.index('static void settings_to_json('):api.index('static const httpd_uri_t settings_get_uri')]
 post = api[api.index('static esp_err_t settings_post_handler('):api.index('static const httpd_uri_t settings_post_uri')]
 preamble = r'''
@@ -58,7 +59,7 @@ static int nvs_get_blob(int a,const char *b,void *c,size_t *n) {(void)a;(void)b;
 static int nvs_set_blob(int a,const char *b,const void *c,size_t n) {(void)a;(void)b;assert(!strcmp(b,"settings_v2") && n<=sizeof stored_v2);memcpy(stored_v2,c,n);stored_v2_len=n;writes++;return ESP_OK;}
 static int nvs_commit(int a) {(void)a;return ESP_OK;}
 static void nvs_close(int a) {(void)a;}
-typedef struct {int content_len;void *user_ctx;const char *input;int received,status;char response[4096];} httpd_req_t;
+typedef struct {size_t content_len;void *user_ctx;const char *input;int received,status;char response[4096];} httpd_req_t;
 #define HTTPD_400_BAD_REQUEST 400
 #define HTTPD_403_FORBIDDEN 403
 #define HTTPD_500_INTERNAL_SERVER_ERROR 500

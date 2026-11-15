@@ -89,6 +89,9 @@ typedef void (*cft_request_fn)(void *arg, cft_stream_t *s, const cft_request_t *
 /** @brief Request of this stream; valid until on_close */
 const cft_request_t *cft_stream_request(const cft_stream_t *s);
 
+/** @brief Whether the edge has already ended the request body. */
+bool cft_stream_body_ended(const cft_stream_t *s);
+
 /**
  * @brief Value of a request header
  *
@@ -324,6 +327,8 @@ typedef struct {
     void *event_arg;                 /*!< Passed to on_event */
     void (*on_poll)(void *arg);      /*!< Optional task-context maintenance callback, once per poll */
     void *poll_arg;
+    uint32_t (*poll_interval_ms)(void *arg); /*!< Optional shorter select wait during application work;
+                                                0 keeps the default. Called on the tunnel thread with poll_arg. */
     uint8_t num_connections;         /*!< 1..4; 0 means 1 */
     const uint8_t *connector_id;     /*!< 16 bytes, or NULL for a random one. Keep it stable across restarts:
                                           the edge then immediately replaces connections from the previous boot. */

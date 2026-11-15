@@ -33,15 +33,15 @@ typedef struct {
 } session_t;
 static session_t s_sessions[AUTH_MAX_SESSIONS];
 
-static void session_cookie(httpd_req_t *req, const session_t *session) {
-  // HTTPD retains the header pointer until the response is sent.
+static void session_cookie(web_request_t *req, const session_t *session) {
+  // Native HTTPD retains this pointer until send; direct HTTP/2 copies it.
   static char cookie[160];
   char persistence[40] = "";
   if (session->remember) snprintf(persistence, sizeof persistence, "; Max-Age=%d", AUTH_COOKIE_SECONDS);
   snprintf(cookie, sizeof cookie,
            "flu_session=%s; Path=/%s; HttpOnly; SameSite=Strict%s",
            session->token, persistence, dashboard_auth_is_remote(req) ? "; Secure" : "");
-  httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+  web_set_header(req, "Set-Cookie", cookie);
 }
 static unsigned s_failed_logins;
 static int64_t s_login_lockout_until_us;
@@ -103,12 +103,13 @@ void dashboard_auth_init(void) {
 
 bool dashboard_auth_is_configured(void) { return s_configured; }
 
-// The tunnel connects only through IPv4 loopback. Never trust a visitor's
-// Host/forwarded headers to decide whether first-use enrollment is local.
-bool dashboard_auth_is_remote(httpd_req_t *req) {
+// Direct HTTP/2 is always remote. Native requests use the real socket peer;
+// visitor-supplied Host/forwarded headers cannot enable local enrollment.
+bool dashboard_auth_is_remote(web_request_t *req) {
+  if (web_request_is_tunnel(req)) return true;
   struct sockaddr_storage peer;
   socklen_t len = sizeof peer;
-  if (getpeername(httpd_req_to_sockfd(req), (struct sockaddr *)&peer, &len) != 0) return true;
+  if (getpeername(web_req_to_sockfd(req), (struct sockaddr *)&peer, &len) != 0) return true;
   uint32_t ip;
   if (peer.ss_family == AF_INET) {
     ip = ntohl(((struct sockaddr_in *)&peer)->sin_addr.s_addr);
@@ -129,9 +130,9 @@ bool dashboard_auth_is_remote(httpd_req_t *req) {
 }
 
 // Cookie parsing is shared by validation, re-login and per-browser logout.
-static session_t *request_session(httpd_req_t *req) {
+static session_t *request_session(web_request_t *req) {
   char cookie[256];
-  if (httpd_req_get_hdr_value_str(req, "Cookie", cookie, sizeof cookie) != ESP_OK) return NULL;
+  if (web_header(req, "Cookie", cookie, sizeof cookie) != ESP_OK) return NULL;
   const char *p = cookie;
   while (*p) {
     while (*p == ' ' || *p == ';') ++p;
@@ -150,7 +151,7 @@ static session_t *request_session(httpd_req_t *req) {
   return NULL;
 }
 
-bool dashboard_auth_check(httpd_req_t *req) {
+bool dashboard_auth_check(web_request_t *req) {
   if (!s_configured) return false;
   session_t *session = request_session(req);
   if (!session) return false;
@@ -159,10 +160,10 @@ bool dashboard_auth_check(httpd_req_t *req) {
   return true;
 }
 
-bool dashboard_auth_check_csrf(httpd_req_t *req) {
+bool dashboard_auth_check_csrf(web_request_t *req) {
   char host[160], origin[160];
-  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof host) != ESP_OK ||
-      httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof origin) != ESP_OK) return false;
+  if (web_header(req, "Host", host, sizeof host) != ESP_OK ||
+      web_header(req, "Origin", origin, sizeof origin) != ESP_OK) return false;
   bool https = !strncmp(origin, "https://", 8);
   if (!https && strncmp(origin, "http://", 7)) return false;
   // Credentials and authenticated writes through the tunnel require HTTPS.
@@ -170,7 +171,7 @@ bool dashboard_auth_check_csrf(httpd_req_t *req) {
   return strcmp(origin + (https ? 8 : 7), host) == 0;
 }
 
-esp_err_t dashboard_auth_login(httpd_req_t *req, const char *password, bool remember) {
+esp_err_t dashboard_auth_login(web_request_t *req, const char *password, bool remember) {
   if (esp_timer_get_time() < s_login_lockout_until_us) return ESP_ERR_TIMEOUT;
   if (!s_configured || !password || strlen(password) < AUTH_PASSWORD_MIN ||
       strlen(password) > AUTH_PASSWORD_MAX || !password_matches(password)) {
@@ -197,7 +198,7 @@ esp_err_t dashboard_auth_login(httpd_req_t *req, const char *password, bool reme
   session->remember = remember;
   session->last_used_us = esp_timer_get_time();
   session_cookie(req, session);
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  web_set_header(req, "Cache-Control", "no-store");
   return ESP_OK;
 }
 
@@ -230,9 +231,9 @@ esp_err_t dashboard_auth_set_password(const char *current, const char *password)
   return err;
 }
 
-void dashboard_auth_logout(httpd_req_t *req) {
+void dashboard_auth_logout(web_request_t *req) {
   session_t *session = request_session(req);
   if (session) memset(session, 0, sizeof *session);
-  httpd_resp_set_hdr(req, "Set-Cookie", "flu_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  web_set_header(req, "Set-Cookie", "flu_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
+  web_set_header(req, "Cache-Control", "no-store");
 }

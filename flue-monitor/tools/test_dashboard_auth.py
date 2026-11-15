@@ -3,13 +3,14 @@
 macOS CommonCrypto supplies real PBKDF2-HMAC-SHA256 for the crypto shim.
 """
 from pathlib import Path
+from web_test_shim import native_source
 import re
 import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
 source = re.sub(r'^#include .*$','', (root/'main/dashboard_auth.c').read_text(), flags=re.M)
-source = source.replace('getpeername(', 'fake_getpeername(')
+source = native_source(source).replace('getpeername(', 'fake_getpeername(')
 preamble = r'''
 #define _DARWIN_C_SOURCE
 #include <assert.h>

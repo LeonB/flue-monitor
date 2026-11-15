@@ -1,5 +1,6 @@
 // POINTT protocol based on CaseyRo/ha_bosch; no Bosch resource writes.
 #include "bosch_client.h"
+#include "web_request.h"
 #include "stack_diagnostics.h"
 #include "bosch_protocol.h"
 #include "dashboard_auth.h"
@@ -412,36 +413,36 @@ static void task(void *arg) {
         }
     }
 }
-static esp_err_t unavailable(httpd_req_t *req, const char *message) {
-    httpd_resp_set_status(req,"503 Service Unavailable");
-    return httpd_resp_sendstr(req,message);
+static esp_err_t unavailable(web_request_t *req, const char *message) {
+    web_set_status(req,"503 Service Unavailable");
+    return web_sendstr(req,message);
 }
-static esp_err_t handler(httpd_req_t *req) {
-    httpd_resp_set_hdr(req,"Cache-Control","no-store");
-    if (!dashboard_auth_check(req)) return httpd_resp_send_err(req,HTTPD_401_UNAUTHORIZED,"Sign in required");
+static esp_err_t handler(web_request_t *req) {
+    web_set_header(req,"Cache-Control","no-store");
+    if (!dashboard_auth_check(req)) return web_send_err(req,HTTPD_401_UNAUTHORIZED,"Sign in required");
     if (!worker) return unavailable(req,"Bosch worker unavailable");
     if (req->method==HTTP_POST) {
-        if (!dashboard_auth_check_csrf(req)) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Invalid request origin");
-        if (req->content_len<=0 || req->content_len>=2048) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Body too large");
+        if (!dashboard_auth_check_csrf(req)) return web_send_err(req,HTTPD_403_FORBIDDEN,"Invalid request origin");
+        if (req->content_len<=0 || req->content_len>=2048) return web_send_err(req,HTTPD_400_BAD_REQUEST,"Body too large");
         char *body=buffer_memory_calloc(req->content_len+1,1);
         if (!body) return unavailable(req,"Insufficient memory");
-        int count=0;
+        size_t count=0;
         while (count<req->content_len) {
-            int n=httpd_req_recv(req,body+count,req->content_len-count);
-            if (n<=0) { wipe_free(body); return httpd_resp_send_err(req,HTTPD_408_REQ_TIMEOUT,"Incomplete request"); }
+            int n=web_recv(req,body+count,req->content_len-count);
+            if (n<=0) { wipe_free(body); return web_send_err(req,HTTPD_408_REQ_TIMEOUT,"Incomplete request"); }
             count+=n;
         }
         cJSON *o=cJSON_Parse(body); const char *a=jstr(o,"action");
         bool valid=!strcmp(a,"start") || !strcmp(a,"callback") || !strcmp(a,"select") || !strcmp(a,"disconnect");
         cJSON_Delete(o);
-        if (!valid) { wipe_free(body); return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Unknown action"); }
+        if (!valid) { wipe_free(body); return web_send_err(req,HTTPD_400_BAD_REQUEST,"Unknown action"); }
         xSemaphoreTake(lock,portMAX_DELAY);
         bool queued=!status.busy && xQueueSend(jobs,&body,0)==pdTRUE;
         if (queued) status.busy=true;
         xSemaphoreGive(lock);
-        if (!queued) { wipe_free(body); httpd_resp_set_status(req,"409 Conflict"); return httpd_resp_sendstr(req,"Bosch operation in progress"); }
-        httpd_resp_set_type(req,"application/json"); httpd_resp_set_status(req,"202 Accepted");
-        return httpd_resp_sendstr(req,"{\"accepted\":true}");
+        if (!queued) { wipe_free(body); web_set_status(req,"409 Conflict"); return web_sendstr(req,"Bosch operation in progress"); }
+        web_set_type(req,"application/json"); web_set_status(req,"202 Accepted");
+        return web_sendstr(req,"{\"accepted\":true}");
     }
     cJSON *o=cJSON_CreateObject(); if (!o) return unavailable(req,"Insufficient memory");
     xSemaphoreTake(lock,portMAX_DELAY);
@@ -461,13 +462,13 @@ static esp_err_t handler(httpd_req_t *req) {
     xSemaphoreGive(lock);
     char *json=cJSON_PrintUnformatted(o); cJSON_Delete(o);
     if (!json) return unavailable(req,"Insufficient memory");
-    httpd_resp_set_type(req,"application/json"); esp_err_t err=httpd_resp_sendstr(req,json); free(json); return err;
+    web_set_type(req,"application/json"); esp_err_t err=web_send_owned(req,json); return err;
 }
 void bosch_client_start(httpd_handle_t server) {
     lock=xSemaphoreCreateMutex(); jobs=xQueueCreate(1,sizeof(char *));
     if (lock && jobs) xTaskCreate(task,"bosch",BOSCH_STACK_BYTES,NULL,3,&worker);
-    const httpd_uri_t get={.uri="/api/bosch",.method=HTTP_GET,.handler=handler};
-    const httpd_uri_t post={.uri="/api/bosch",.method=HTTP_POST,.handler=handler};
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server,&get));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server,&post));
+    static const web_route_t get={.uri="/api/bosch",.method=HTTP_GET,.handler=handler};
+    static const web_route_t post={.uri="/api/bosch",.method=HTTP_POST,.handler=handler};
+    ESP_ERROR_CHECK(web_register_handler(server,&get));
+    ESP_ERROR_CHECK(web_register_handler(server,&post));
 }

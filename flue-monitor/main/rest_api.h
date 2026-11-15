@@ -39,6 +39,9 @@ httpd_handle_t rest_api_start(void);
 // Tunnel-task-only fast path for already-public font resources.
 bool rest_api_tunnel_font(cft_stream_t *stream, const char *uri);
 
+// Queue direct HTTP/2 application handling on the same task as native HTTP.
+esp_err_t rest_api_queue_work(httpd_work_fn_t work, void *arg);
+
 // Serializes a reading into the exact same JSON shape GET /api/reading
 // returns -- shared with ws_server's own reading broadcast (via main.c) so
 // both surfaces agree on one schema. Caller must free() the returned string.

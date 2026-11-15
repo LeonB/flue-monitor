@@ -1,6 +1,7 @@
 """Check generated URL dependencies and execute the real asset response handler."""
 import hashlib
 from pathlib import Path
+from web_test_shim import native_source
 import re
 import subprocess
 import tempfile
@@ -33,7 +34,7 @@ with tempfile.TemporaryDirectory() as directory:
     assert original["html"] != web.versions["html"]
     assert original["js"] == web.versions["js"]
 
-source = (web.root / "main/rest_api.c").read_text()
+source = native_source((web.root / "main/rest_api.c").read_text(), tunnel='false')
 handler = source.split("static esp_err_t serve_asset(", 1)[1].split("// iOS fetches", 1)[0]
 handler = "static esp_err_t serve_asset(" + handler
 shim = r'''#include <assert.h>

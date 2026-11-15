@@ -1,5 +1,44 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-15 direct HTTP/2 assets and API DEPLOYED
+
+Owner requested remaining assets and dashboard API directly over HTTP/2. Added
+web_request adapter shared by real native HTTPD requests and direct tunnel jobs.
+No synthetic httpd_req_t objects and no loopback proxy sockets for application
+routes. Both transports dispatch existing app/auth handlers on the HTTP task;
+only tunnel task touches CFT streams. Immutable assets reference flash; JSON
+ownership and bounded request storage stay in PSRAM. Internal 8-byte atomic
+control per job avoids ESP32 external-RAM S32C1I limitations. Maximum16 pending
+jobs,10s receive/handoff timeout,512B streaming chunks. Active handoff polling5ms,
+normal idle100ms preserved. Identity clients use PSRAM ROM tinfl dictionary.
+LAN HTTP/1.1, display WS and local OTA remain supported. Host/HTTPS allowlist,
+cookies, CSRF and settings redaction preserved. Removed obsolete proxy queue.
+
+Host checks passed: dashboard auth, versioned assets, Bosch, Cloudflare settings,
+HTTP PSRAM/OTA buffers, history snapshot, tunnel lifecycle/policy, compressed
+assets, and actual direct bridge+adapter with actual auth under ASan/UBSan.
+Direct tests include fragmented POST, cancellation/worker lifetime, all allocation
+failure points, saturation/timeouts, identity multi-block decoding,512B writes,
+header lifetime, real PBKDF2 cookies and CSRF. Decoder reference dependency:
+/tmp/flue-miniz-v114.c (official miniz v114 single-file source).
+
+Firmware1514736B,21264B free per OTA slot; SHA256
+51b99163eef6bff3defa9dc86b436c100ac0db1385bd452c86f3965dda22d249.
+Frozen bin/ELF/map/actual /tmp/flue-cloudflare.sdkconfig/source/build log:
+.cache/direct-http2/51b99163eef6bff3/. OTA succeeded at192.168.1.137, no USB
+opened. UTC backup+independent restore readback verified360samples/14events:
+.cache/ota-history/20261115T212014414701Z/. Public hardware checks passed58
+asset/security cases (LAN versus public decoded bytes, all14launch images,
+icons/fonts/manifest in gzip and identity; protected APIs401; local-only404;
+foreign Origin and remote setup403), plus36requests at concurrency12, all200.
+Results hardware-public.json in frozen directory. Public login and auth-status
+API work. Authenticated Chrome verification passed after owner-authorized login: live
+reading, room temperature and Wi-Fi update; burn graph drawn with historical
+events; settings and Bosch state load; Cloudflare reports4/4 connections.
+Reload retains the authenticated session and live dashboard. No settings changed. Owner requested committing the change; nothing pushed.
+Previous stable image .cache/graph-loading/98da9d2639d2bb25/ retained.
+
+
 ## 2026-11-15 graph loading animation DEPLOYED
 
 Owner requested visible feedback while history loads. Graph card now reserves

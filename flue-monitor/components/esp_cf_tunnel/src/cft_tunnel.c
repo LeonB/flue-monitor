@@ -474,7 +474,8 @@ void cft_tunnel_run(cft_tunnel_t *t)
         FD_ZERO(&rfds);
         FD_ZERO(&wfds);
         int maxfd = -1;
-        int64_t wake = now + POLL_MS;
+        uint32_t interval = t->cfg.poll_interval_ms ? t->cfg.poll_interval_ms(t->cfg.poll_arg) : 0;
+        int64_t wake = now + (interval && interval < POLL_MS ? interval : POLL_MS);
         for (int i = 0; i < MAX_SLOTS; i++) {
             slot_t *s = &t->slots[i];
             if (s->state == SLOT_WAIT) {

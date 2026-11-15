@@ -52,9 +52,12 @@ static void stack_diagnostics_register(int slot,unsigned bytes){assert(slot==1 &
 static void esp_read_mac(uint8_t *out,int type){(void)type;memset(out,0x42,6);}
 static void *buffer_memory_calloc(size_t n,size_t size){return calloc(n,size);}
 struct cft_tunnel { int dummy; };
-struct cft_stream {int response;char service[40];const char *type;cft_stream_handlers_t handlers;void *ctx;bool paused;};
+struct cft_stream {bool direct;int response;char service[40];const char *type;cft_stream_handlers_t handlers;void *ctx;bool paused;};
 static const cft_transport_ops_t cft_transport_esp={0};
 static bool rest_api_tunnel_font(cft_stream_t *s,const char *uri){(void)s;(void)uri;return false;}
+static void cloudflare_http_request(cft_stream_t*s,const cft_request_t*r,int64_t now){assert(r->path&&now);s->direct=true;}
+static void cloudflare_http_poll(int64_t now){assert(now);}
+static uint32_t cloudflare_http_wait_ms(void*arg){(void)arg;return 0;}
 static const char *cft_stream_header_impl(const cft_stream_t *s,const char *name){assert(!strcmp(name,"content-type"));return s->type;}
 const char *cft_stream_header(const cft_stream_t *s,const char *name){return cft_stream_header_impl(s,name);}
 int cft_stream_respond(cft_stream_t *s,int code,const char *type,const void *body,size_t n){(void)type;assert(strlen(body)==n);s->response=code;return 0;}
@@ -89,13 +92,13 @@ int main(void){
  assert(!cloudflare_route_allowed("DELETE","/api/settings",false));assert(!cloudflare_route_allowed("GET","/",true));
  strcpy(saved.hostname,"cf-test.example.nl");strcpy(saved.token,"test-token");saved.enabled=1;saved.connections=4;
  cft_request_t req={.method="GET",.path="/dashboard.js?v=asset",.authority=saved.hostname,.scheme="https"};
- cft_stream_t stream={0};on_request(&saved,&stream,&req);assert(!strcmp(stream.service,"http://127.0.0.1:80"));
+ cft_stream_t stream={0};on_request(&saved,&stream,&req);assert(stream.direct);
  stream=(cft_stream_t){0};req.authority="localhost";on_request(&saved,&stream,&req);assert(stream.response==403);
  req.authority=saved.hostname;req.scheme="http";on_request(&saved,&stream,&req);assert(stream.response==403);
  req.scheme="https";req.path="/ota";on_request(&saved,&stream,&req);assert(stream.response==404);
  req.path="/api/settings";req.method="POST";req.content_length=8192;stream.type="application/json";on_request(&saved,&stream,&req);assert(stream.response==400);
  req.content_length=4000;stream.type="text/plain";on_request(&saved,&stream,&req);assert(stream.response==400);
- stream=(cft_stream_t){.type="application/json; charset=utf-8"};on_request(&saved,&stream,&req);assert(*stream.service);
+ stream=(cft_stream_t){.type="application/json; charset=utf-8"};on_request(&saved,&stream,&req);assert(stream.direct);
  set_state(CLOUDFLARE_STATUS_CONNECTING,4);
  for(int i=0;i<4;i++){cft_event_t e={.type=CFT_EVENT_REGISTERED,.conn_index=i};on_event(NULL,&e);}
  cloudflare_status_t status;cloudflare_tunnel_get_status(&status);assert(status.connections==4 && status.state==CLOUDFLARE_STATUS_CONNECTED);
@@ -106,13 +109,13 @@ int main(void){
  saved.enabled=1;scenario=2;
  if(!setjmp(done))created_task(NULL);
  assert(run_count==1 && free_count==2 && stop_count==1 && !active && creates==1);
- puts("PASS: route/query allowlist, fixed loopback origin, HTTPS/Host/body checks, four-connection status, graceful config restart and config/publication race cleanup");
+ puts("PASS: route/query allowlist, direct HTTP2 dispatch without a loopback origin, HTTPS/Host/body checks, four-connection status, graceful config restart and config/publication race cleanup");
 }
 '''
 # The settings getter must be declared before the extracted implementation.
 with tempfile.TemporaryDirectory() as directory:
     tmp=Path(directory);c=tmp/'test.c';binary=tmp/'test'
-    c.write_text(preamble+settings+header+test+'\n#include "cloudflare_queue.h"\n'+source+main)
+    c.write_text(preamble+settings+header+test+source+main)
     subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-Wno-unused-function',
         '-fsanitize=address,undefined','-I'+str(root/'main'),
         '-I'+str(root/'components/esp_cf_tunnel/include'),str(c),'-o',str(binary)],check=True)

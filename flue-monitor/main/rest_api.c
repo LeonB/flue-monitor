@@ -1,4 +1,5 @@
 #include "rest_api.h"
+#include "web_request.h"
 
 #include <math.h>
 #include <ctype.h>
@@ -29,17 +30,17 @@
 
 static const char *TAG = "rest_api";
 
-static bool auth_required(httpd_req_t *req) {
+static bool auth_required(web_request_t *req) {
   if (dashboard_auth_check(req)) return false;
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  httpd_resp_set_hdr(req, "WWW-Authenticate", "Session");
-  httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Sign in required");
+  web_set_header(req, "Cache-Control", "no-store");
+  web_set_header(req, "WWW-Authenticate", "Session");
+  web_send_err(req, HTTPD_401_UNAUTHORIZED, "Sign in required");
   return true;
 }
 
 // Initial password enrollment is allowed only through a LAN hostname/IP.
 // Never let a remote tunnel visitor race to claim a factory-fresh device.
-static bool auth_setup_is_remote(httpd_req_t *req) {
+static bool auth_setup_is_remote(web_request_t *req) {
   return dashboard_auth_is_remote(req);
 }
 
@@ -48,37 +49,37 @@ static const char login_page[] = "<!doctype html><html lang=\"en\"><meta name=\"
   "<script>(()=>{if(location.pathname!=='/login'){location.replace('/login');return}const form=document.querySelector('form'),password=document.getElementById('p'),confirm=document.getElementById('c')||document.createElement('input'),intro=document.getElementById('intro'),label=document.getElementById('label'),button=document.getElementById('b'),feedback=document.getElementById('e'),remember=document.getElementById('remember');let first=false,ready=false,busy=false;const show=document.getElementById('show');show.onclick=()=>{const reveal=password.type==='password';password.type=reveal?'text':'password';show.setAttribute('aria-label',reveal?'Hide password':'Show password');show.setAttribute('aria-pressed',String(reveal))};async function request(url,options){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);try{const response=await fetch(url,{...options,signal:controller.signal,cache:'no-store'});let data;try{data=await response.json()}catch{throw new Error('The monitor returned an unexpected response. Please try again.')}if(!response.ok)throw new Error(data.error||(response.status===403?'This address cannot be used to sign in. Open the HTTPS dashboard.':'Could not sign in. Please try again.'));return data}finally{clearTimeout(timer)}}request('/api/auth/status').then(status=>{first=!status.configured;document.getElementById('title').textContent=first?'Make yourself at home':'Welcome back';button.textContent=first?'Set password':'Sign in';intro.textContent=first?'Choose a dashboard password (8–128 characters).':'Sign in to your Flue Monitor.';label.textContent=first?'New password':'Dashboard password';password.autocomplete=first?'new-password':'current-password';form.action=first?'/api/auth/setup':'/api/auth/login';confirm.style.display=first?'block':'none';confirm.required=first;confirm.disabled=!first;confirm.autocomplete=first?'new-password':'off';confirm.setAttribute('aria-hidden',first?'false':'true');if(first&&status.setup_local_only){intro.textContent='For security, set the first password from your home network using the monitor’s local address.';password.disabled=confirm.disabled=true;return}ready=true;button.disabled=false}).catch(error=>{feedback.textContent=error.name==='AbortError'?'The monitor did not respond. Reload the page to try again.':error.message});form.onsubmit=async event=>{event.preventDefault();if(!ready||busy)return;feedback.textContent='';if(first&&password.value!==confirm.value){feedback.textContent='Passwords do not match.';return}busy=true;button.disabled=true;button.textContent=first?'Saving…':'Signing in…';feedback.textContent='Waiting for the monitor…';try{const result=await request(first?'/api/auth/setup':'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(first?{password:password.value,confirm_password:confirm.value,remember:remember.checked}:{password:password.value,remember:remember.checked})});if(result.success!==true)throw new Error('The monitor did not confirm sign-in. Please try again.');feedback.textContent='Signed in. Opening dashboard…';location.replace('/')}catch(error){feedback.textContent=error.name==='AbortError'?'The monitor did not respond within 20 seconds. Please try again.':error.message}finally{busy=false;button.disabled=false;button.textContent=first?'Set password':'Sign in'}};})();</script>";
 #endif
 
-static esp_err_t auth_status_handler(httpd_req_t *req) {
+static esp_err_t auth_status_handler(web_request_t *req) {
   char body[80];
   bool configured = dashboard_auth_is_configured();
   snprintf(body, sizeof body, "{\"configured\":%s,\"setup_local_only\":%s}",
            configured ? "true" : "false", !configured && auth_setup_is_remote(req) ? "true" : "false");
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  return httpd_resp_sendstr(req, body);
+  web_set_type(req, "application/json");
+  web_set_header(req, "Cache-Control", "no-store");
+  return web_sendstr(req, body);
 }
-static const httpd_uri_t auth_status_uri = { .uri="/api/auth/status", .method=HTTP_GET, .handler=auth_status_handler };
+static const web_route_t auth_status_uri = { .uri="/api/auth/status", .method=HTTP_GET, .handler=auth_status_handler };
 
-static esp_err_t auth_form_handler(httpd_req_t *req) {
+static esp_err_t auth_form_handler(web_request_t *req) {
   if ((strcmp(req->uri, "/api/auth/password") == 0 || strcmp(req->uri, "/api/auth/logout") == 0) && auth_required(req)) return ESP_FAIL;
-  if (!dashboard_auth_check_csrf(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Invalid request origin");
-  if (req->content_len <= 0 || req->content_len > 512) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request");
+  if (!dashboard_auth_check_csrf(req)) return web_send_err(req, HTTPD_403_FORBIDDEN, "Invalid request origin");
+  if (req->content_len <= 0 || req->content_len > 512) return web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request");
   char *body = buffer_memory_calloc(req->content_len + 1, 1);
-  if (!body) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
-  int got = 0;
+  if (!body) return web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
+  size_t got = 0;
   while (got < req->content_len) {
-    int part = httpd_req_recv(req, body + got, req->content_len - got);
+    int part = web_recv(req, body + got, req->content_len - got);
     if (part <= 0) {
       memset(body, 0, req->content_len + 1);
       free(body);
-      return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
+      return web_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
     }
     got += part;
   }
   cJSON *root = cJSON_Parse(body);
   memset(body, 0, req->content_len + 1);
   free(body);
-  if (!root) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+  if (!root) return web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
   const cJSON *pw = cJSON_GetObjectItemCaseSensitive(root, "password");
   const cJSON *remember = cJSON_GetObjectItemCaseSensitive(root, "remember");
   bool keep_signed_in = cJSON_IsTrue(remember);
@@ -88,13 +89,13 @@ static esp_err_t auth_form_handler(httpd_req_t *req) {
   bool setup = strcmp(req->uri, "/api/auth/setup") == 0;
   if (setup && auth_setup_is_remote(req)) {
     cJSON_Delete(root);
-    return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Set the first password from your home network");
+    return web_send_err(req, HTTPD_403_FORBIDDEN, "Set the first password from your home network");
   }
   if (pw && (!cJSON_IsString(pw) || strlen(pw->valuestring) < 8 || strlen(pw->valuestring) > 128)) {
     cJSON_Delete(root);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_status(req, "400 Bad Request");
-    return httpd_resp_sendstr(req, "{\"error\":\"Password must be 8–128 characters.\"}");
+    web_set_type(req, "application/json");
+    web_set_status(req, "400 Bad Request");
+    return web_sendstr(req, "{\"error\":\"Password must be 8–128 characters.\"}");
   }
   char password_copy[129] = {0};
   if (cJSON_IsString(pw) && strlen(pw->valuestring) < sizeof password_copy)
@@ -110,34 +111,34 @@ static esp_err_t auth_form_handler(httpd_req_t *req) {
   else if (strcmp(req->uri, "/api/auth/logout") == 0 && dashboard_auth_check_csrf(req)) {
     dashboard_auth_logout(req);
     cJSON_Delete(root);
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"success\":true}");
+    web_set_type(req, "application/json");
+    return web_sendstr(req, "{\"success\":true}");
   }
   cJSON_Delete(root);
   if (err == ESP_OK) {
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    web_set_type(req, "application/json");
+    web_set_header(req, "Cache-Control", "no-store");
     if (strcmp(req->uri, "/api/auth/login") == 0)
-      return httpd_resp_sendstr(req, "{\"success\":true}");
+      return web_sendstr(req, "{\"success\":true}");
     if (strcmp(req->uri, "/api/auth/setup") == 0) {
       // First-use setup signs in the owner immediately after persisting.
       dashboard_auth_login(req, password_copy, keep_signed_in);
-      return httpd_resp_sendstr(req, "{\"success\":true}");
+      return web_sendstr(req, "{\"success\":true}");
     }
-    return httpd_resp_sendstr(req, "{\"success\":true,\"reauthenticate\":true}");
+    return web_sendstr(req, "{\"success\":true,\"reauthenticate\":true}");
   }
-  httpd_resp_set_type(req, "application/json");
+  web_set_type(req, "application/json");
   const char *status = err == ESP_ERR_NOT_FOUND ? "401 Unauthorized" :
                        err == ESP_ERR_TIMEOUT ? "429 Too Many Requests" : "400 Bad Request";
-  httpd_resp_set_status(req, status);
-  return httpd_resp_sendstr(req, err == ESP_ERR_NOT_FOUND ? "{\"error\":\"Password is incorrect.\"}" :
+  web_set_status(req, status);
+  return web_sendstr(req, err == ESP_ERR_NOT_FOUND ? "{\"error\":\"Password is incorrect.\"}" :
                              err == ESP_ERR_TIMEOUT ? "{\"error\":\"Too many attempts. Wait 30 seconds and try again.\"}" :
                              "{\"error\":\"Password must be 8–128 characters and both entries must match.\"}");
 }
-static const httpd_uri_t auth_login_uri = { .uri="/api/auth/login", .method=HTTP_POST, .handler=auth_form_handler };
-static const httpd_uri_t auth_setup_uri = { .uri="/api/auth/setup", .method=HTTP_POST, .handler=auth_form_handler };
-static const httpd_uri_t auth_password_uri = { .uri="/api/auth/password", .method=HTTP_POST, .handler=auth_form_handler };
-static const httpd_uri_t auth_logout_uri = { .uri="/api/auth/logout", .method=HTTP_POST, .handler=auth_form_handler };
+static const web_route_t auth_login_uri = { .uri="/api/auth/login", .method=HTTP_POST, .handler=auth_form_handler };
+static const web_route_t auth_setup_uri = { .uri="/api/auth/setup", .method=HTTP_POST, .handler=auth_form_handler };
+static const web_route_t auth_password_uri = { .uri="/api/auth/password", .method=HTTP_POST, .handler=auth_form_handler };
+static const web_route_t auth_logout_uri = { .uri="/api/auth/logout", .method=HTTP_POST, .handler=auth_form_handler };
 
 // Text assets are stored only as gzip; WOFF2 files are already compressed.
 extern const char web_ui_font_caprasimo_400_start[] asm("_binary_caprasimo_400_woff2_start");
@@ -164,7 +165,7 @@ bool rest_api_tunnel_font(cft_stream_t *stream, const char *uri) {
 // Versioned static assets stay fresh for a year; legacy URLs and HTML revalidate.
 // Gzip clients use flash directly; identity clients stream through the ROM inflater.
 
-static esp_err_t serve_asset(httpd_req_t *req, const char *type,
+static esp_err_t serve_asset(web_request_t *req, const char *type,
                              const char *raw, size_t raw_len, const char *raw_etag,
                              const unsigned char *gzip, size_t gzip_len, const char *gzip_etag) {
   // Fonts and app identity assets are public for sign-in and home screen discovery.
@@ -177,57 +178,57 @@ static esp_err_t serve_asset(httpd_req_t *req, const char *type,
                            strncmp(req->uri, "/service-worker.js", 18) != 0;
   if (can_version && strchr(req->uri, '?')) {
     char query[160], version[32];
-    if (httpd_req_get_url_query_str(req, query, sizeof query) != ESP_OK) {
-      httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-      return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Asset query too long");
+    if (web_query(req, query, sizeof query) != ESP_OK) {
+      web_set_header(req, "Cache-Control", "no-store");
+      return web_send_err(req, HTTPD_400_BAD_REQUEST, "Asset query too long");
     }
     esp_err_t result = httpd_query_key_value(query, "v", version, sizeof version);
     if (result != ESP_ERR_NOT_FOUND) {
       // Hash the identity bytes, independent of Accept-Encoding and its ETag.
       if (result != ESP_OK || strlen(version) != 24 ||
           strncmp(version, raw_etag + 1, 24) != 0) {
-        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Asset version unavailable; reload the page");
+        web_set_header(req, "Cache-Control", "no-store");
+        return web_send_err(req, HTTPD_404_NOT_FOUND, "Asset version unavailable; reload the page");
       }
       versioned = true;
     }
   }
-  bool compressed = gzip && compressed_asset_accepts_gzip(req);
+  bool compressed = gzip && web_accepts_gzip(req);
   const char *etag = compressed ? gzip_etag : raw_etag;
   char condition[256];
-  bool unchanged = httpd_req_get_hdr_value_str(req, "If-None-Match", condition, sizeof(condition)) == ESP_OK
+  bool unchanged = web_header(req, "If-None-Match", condition, sizeof(condition)) == ESP_OK
                    && (strstr(condition, etag) || strcmp(condition, "*") == 0);
-  httpd_resp_set_type(req, type);
-  httpd_resp_set_hdr(req, "Cache-Control", versioned ? "private, max-age=31536000, immutable" : "no-cache");
-  httpd_resp_set_hdr(req, "ETag", etag);
-  if (gzip) httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
-  if (compressed) httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+  web_set_type(req, type);
+  web_set_header(req, "Cache-Control", versioned ? "private, max-age=31536000, immutable" : "no-cache");
+  web_set_header(req, "ETag", etag);
+  if (gzip) web_set_header(req, "Vary", "Accept-Encoding");
+  if (compressed) web_set_header(req, "Content-Encoding", "gzip");
   if (unchanged) {
-    httpd_resp_set_status(req, "304 Not Modified");
-    return httpd_resp_send(req, NULL, 0);
+    web_set_status(req, "304 Not Modified");
+    return web_send(req, NULL, 0);
   }
-  if (!compressed && !raw) return compressed_asset_send_identity(req, gzip, gzip_len, raw_len);
-  return httpd_resp_send(req, compressed ? (const char *)gzip : raw, compressed ? gzip_len : raw_len);
+  if (!compressed && !raw) return web_send_identity(req, gzip, gzip_len, raw_len);
+  return web_send_ref(req, compressed ? (const char *)gzip : raw, compressed ? gzip_len : raw_len);
 }
 
 // iOS fetches the matching launch image during home screen installation.
-static esp_err_t web_service_worker_get_handler(httpd_req_t *req) {
+static esp_err_t web_service_worker_get_handler(web_request_t *req) {
   return serve_asset(req, "application/javascript", NULL, ASSET_service_worker_RAW_SIZE,
     ASSET_service_worker_ETAG, asset_service_worker_gzip, sizeof(asset_service_worker_gzip), ASSET_service_worker_GZIP_ETAG);
 }
-static const httpd_uri_t web_service_worker_uri = { .uri="/service-worker.js", .method=HTTP_GET, .handler=web_service_worker_get_handler };
+static const web_route_t web_service_worker_uri = { .uri="/service-worker.js", .method=HTTP_GET, .handler=web_service_worker_get_handler };
 
-static esp_err_t web_loading_get_handler(httpd_req_t *req) {
+static esp_err_t web_loading_get_handler(web_request_t *req) {
   return serve_asset(req, "text/html", NULL, ASSET_loading_RAW_SIZE,
     ASSET_loading_ETAG, asset_loading_gzip, sizeof(asset_loading_gzip), ASSET_loading_GZIP_ETAG);
 }
-static const httpd_uri_t web_loading_uri = { .uri="/loading.html", .method=HTTP_GET, .handler=web_loading_get_handler };
+static const web_route_t web_loading_uri = { .uri="/loading.html", .method=HTTP_GET, .handler=web_loading_get_handler };
 
-static esp_err_t web_startup_get_handler(httpd_req_t *req) {
+static esp_err_t web_startup_get_handler(web_request_t *req) {
   char query[64], size[24];
-  if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+  if (web_query(req, query, sizeof(query)) != ESP_OK ||
       httpd_query_key_value(query, "size", size, sizeof(size)) != ESP_OK)
-    return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Unknown launch image");
+    return web_send_err(req, HTTPD_404_NOT_FOUND, "Unknown launch image");
   if (strcmp(size, "640x1136") == 0)
     return serve_asset(req, "image/png", NULL, ASSET_startup_640x1136_RAW_SIZE,
       ASSET_startup_640x1136_ETAG, asset_startup_640x1136_gzip, sizeof(asset_startup_640x1136_gzip), ASSET_startup_640x1136_GZIP_ETAG);
@@ -270,138 +271,138 @@ static esp_err_t web_startup_get_handler(httpd_req_t *req) {
   if (strcmp(size, "1080x2340") == 0)
     return serve_asset(req, "image/png", NULL, ASSET_startup_1080x2340_RAW_SIZE,
       ASSET_startup_1080x2340_ETAG, asset_startup_1080x2340_gzip, sizeof(asset_startup_1080x2340_gzip), ASSET_startup_1080x2340_GZIP_ETAG);
-  return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Unknown launch image");
+  return web_send_err(req, HTTPD_404_NOT_FOUND, "Unknown launch image");
 }
-static const httpd_uri_t web_startup_uri = { .uri="/startup.png", .method=HTTP_GET, .handler=web_startup_get_handler };
+static const web_route_t web_startup_uri = { .uri="/startup.png", .method=HTTP_GET, .handler=web_startup_get_handler };
 
-static esp_err_t web_stove_svg_get_handler(httpd_req_t *req) {
+static esp_err_t web_stove_svg_get_handler(web_request_t *req) {
   return serve_asset(req, "image/svg+xml", NULL, ASSET_stove_svg_RAW_SIZE,
                      ASSET_stove_svg_ETAG, asset_stove_svg_gzip, sizeof(asset_stove_svg_gzip), ASSET_stove_svg_GZIP_ETAG);
 }
-static const httpd_uri_t web_stove_svg_uri = { .uri="/flue-icon-stove.svg", .method=HTTP_GET, .handler=web_stove_svg_get_handler };
+static const web_route_t web_stove_svg_uri = { .uri="/flue-icon-stove.svg", .method=HTTP_GET, .handler=web_stove_svg_get_handler };
 
-static esp_err_t web_favicon_get_handler(httpd_req_t *req) {
+static esp_err_t web_favicon_get_handler(web_request_t *req) {
   return serve_asset(req, "image/x-icon", NULL, ASSET_favicon_RAW_SIZE,
                      ASSET_favicon_ETAG, asset_favicon_gzip, sizeof(asset_favicon_gzip), ASSET_favicon_GZIP_ETAG);
 }
-static const httpd_uri_t web_favicon_uri = { .uri="/favicon.ico", .method=HTTP_GET, .handler=web_favicon_get_handler };
+static const web_route_t web_favicon_uri = { .uri="/favicon.ico", .method=HTTP_GET, .handler=web_favicon_get_handler };
 
-static esp_err_t web_apple_icon_get_handler(httpd_req_t *req) {
+static esp_err_t web_apple_icon_get_handler(web_request_t *req) {
   return serve_asset(req, "image/png", NULL, ASSET_apple_icon_RAW_SIZE,
                      ASSET_apple_icon_ETAG, asset_apple_icon_gzip, sizeof(asset_apple_icon_gzip), ASSET_apple_icon_GZIP_ETAG);
 }
-static const httpd_uri_t web_apple_icon_uri = { .uri="/apple-touch-icon.png", .method=HTTP_GET, .handler=web_apple_icon_get_handler };
+static const web_route_t web_apple_icon_uri = { .uri="/apple-touch-icon.png", .method=HTTP_GET, .handler=web_apple_icon_get_handler };
 
-static esp_err_t web_icon_192_get_handler(httpd_req_t *req) {
+static esp_err_t web_icon_192_get_handler(web_request_t *req) {
   return serve_asset(req, "image/png", NULL, ASSET_icon_192_RAW_SIZE,
                      ASSET_icon_192_ETAG, asset_icon_192_gzip, sizeof(asset_icon_192_gzip), ASSET_icon_192_GZIP_ETAG);
 }
-static const httpd_uri_t web_icon_192_uri = { .uri="/icon-192.png", .method=HTTP_GET, .handler=web_icon_192_get_handler };
+static const web_route_t web_icon_192_uri = { .uri="/icon-192.png", .method=HTTP_GET, .handler=web_icon_192_get_handler };
 
-static esp_err_t web_icon_512_get_handler(httpd_req_t *req) {
+static esp_err_t web_icon_512_get_handler(web_request_t *req) {
   return serve_asset(req, "image/png", NULL, ASSET_icon_512_RAW_SIZE,
                      ASSET_icon_512_ETAG, asset_icon_512_gzip, sizeof(asset_icon_512_gzip), ASSET_icon_512_GZIP_ETAG);
 }
-static const httpd_uri_t web_icon_512_uri = { .uri="/icon-512.png", .method=HTTP_GET, .handler=web_icon_512_get_handler };
+static const web_route_t web_icon_512_uri = { .uri="/icon-512.png", .method=HTTP_GET, .handler=web_icon_512_get_handler };
 
-static esp_err_t web_manifest_get_handler(httpd_req_t *req) {
+static esp_err_t web_manifest_get_handler(web_request_t *req) {
   return serve_asset(req, "application/manifest+json", NULL, ASSET_manifest_RAW_SIZE,
                      ASSET_manifest_ETAG, asset_manifest_gzip, sizeof(asset_manifest_gzip), ASSET_manifest_GZIP_ETAG);
 }
-static const httpd_uri_t web_manifest_uri = { .uri="/site.webmanifest", .method=HTTP_GET, .handler=web_manifest_get_handler };
+static const web_route_t web_manifest_uri = { .uri="/site.webmanifest", .method=HTTP_GET, .handler=web_manifest_get_handler };
 
-static esp_err_t web_ui_burn_graph_js_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_burn_graph_js_get_handler(web_request_t *req) {
   return serve_asset(req, "application/javascript", NULL, ASSET_burn_graph_js_RAW_SIZE,
                      ASSET_burn_graph_js_ETAG, asset_burn_graph_js_gzip, sizeof(asset_burn_graph_js_gzip), ASSET_burn_graph_js_GZIP_ETAG);
 }
-static const httpd_uri_t web_ui_burn_graph_js_uri = {.uri = "/burn-graph.js", .method = HTTP_GET, .handler = web_ui_burn_graph_js_get_handler};
+static const web_route_t web_ui_burn_graph_js_uri = {.uri = "/burn-graph.js", .method = HTTP_GET, .handler = web_ui_burn_graph_js_get_handler};
 
-static esp_err_t web_ui_uplot_js_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_uplot_js_get_handler(web_request_t *req) {
   return serve_asset(req, "application/javascript", NULL, ASSET_uplot_js_RAW_SIZE,
                      ASSET_uplot_js_ETAG, asset_uplot_js_gzip, sizeof(asset_uplot_js_gzip), ASSET_uplot_js_GZIP_ETAG);
 }
-static const httpd_uri_t web_ui_uplot_js_uri = {.uri = "/vendor/uplot.min.js", .method = HTTP_GET, .handler = web_ui_uplot_js_get_handler};
+static const web_route_t web_ui_uplot_js_uri = {.uri = "/vendor/uplot.min.js", .method = HTTP_GET, .handler = web_ui_uplot_js_get_handler};
 
-static esp_err_t web_ui_uplot_css_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_uplot_css_get_handler(web_request_t *req) {
   return serve_asset(req, "text/css", NULL, ASSET_uplot_css_RAW_SIZE,
                      ASSET_uplot_css_ETAG, asset_uplot_css_gzip, sizeof(asset_uplot_css_gzip), ASSET_uplot_css_GZIP_ETAG);
 }
-static const httpd_uri_t web_ui_uplot_css_uri = {.uri = "/vendor/uplot.min.css", .method = HTTP_GET, .handler = web_ui_uplot_css_get_handler};
+static const web_route_t web_ui_uplot_css_uri = {.uri = "/vendor/uplot.min.css", .method = HTTP_GET, .handler = web_ui_uplot_css_get_handler};
 
-static esp_err_t web_ui_html_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_html_get_handler(web_request_t *req) {
   if (!dashboard_auth_check(req)) {
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    web_set_type(req, "text/html; charset=utf-8");
+    web_set_header(req, "Cache-Control", "no-store");
     if (strcmp(req->uri, "/login")) {
-      httpd_resp_set_status(req, "303 See Other");
-      httpd_resp_set_hdr(req, "Location", "/login");
-      return httpd_resp_sendstr(req, "Sign in at /login");
+      web_set_status(req, "303 See Other");
+      web_set_header(req, "Location", "/login");
+      return web_sendstr(req, "Sign in at /login");
     }
-    httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
-    if (compressed_asset_accepts_gzip(req)) {
-      httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-      return httpd_resp_send(req, (const char *)asset_login_gzip, sizeof asset_login_gzip);
+    web_set_header(req, "Vary", "Accept-Encoding");
+    if (web_accepts_gzip(req)) {
+      web_set_header(req, "Content-Encoding", "gzip");
+      return web_send_ref(req, (const char *)asset_login_gzip, sizeof asset_login_gzip);
     }
-    return compressed_asset_send_identity(req, asset_login_gzip, sizeof asset_login_gzip, ASSET_login_RAW_SIZE);
+    return web_send_identity(req, asset_login_gzip, sizeof asset_login_gzip, ASSET_login_RAW_SIZE);
   }
   return serve_asset(req, "text/html", NULL, ASSET_html_RAW_SIZE,
                      ASSET_html_ETAG, asset_html_gzip, sizeof(asset_html_gzip), ASSET_html_GZIP_ETAG);
 }
-static const httpd_uri_t web_ui_html_uri = {.uri = "/", .method = HTTP_GET, .handler = web_ui_html_get_handler};
+static const web_route_t web_ui_html_uri = {.uri = "/", .method = HTTP_GET, .handler = web_ui_html_get_handler};
 // Real document navigation: password managers must see the login at /login.
-static const httpd_uri_t web_ui_login_uri = {.uri = "/login", .method = HTTP_GET, .handler = web_ui_html_get_handler};
+static const web_route_t web_ui_login_uri = {.uri = "/login", .method = HTTP_GET, .handler = web_ui_html_get_handler};
 
-static esp_err_t web_ui_js_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_js_get_handler(web_request_t *req) {
   return serve_asset(req, "application/javascript", NULL, ASSET_js_RAW_SIZE,
                      ASSET_js_ETAG, asset_js_gzip, sizeof(asset_js_gzip), ASSET_js_GZIP_ETAG);
 }
-static const httpd_uri_t web_ui_js_uri = {.uri = "/dashboard.js", .method = HTTP_GET, .handler = web_ui_js_get_handler};
+static const web_route_t web_ui_js_uri = {.uri = "/dashboard.js", .method = HTTP_GET, .handler = web_ui_js_get_handler};
 
-static esp_err_t web_ui_css_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_css_get_handler(web_request_t *req) {
   const compressed_asset_t *asset = portal_styles_asset();
   return serve_asset(req, "text/css", NULL, asset->raw_size, asset->etag,
                      asset->data, asset->size, asset->gzip_etag);
 }
-static const httpd_uri_t web_ui_css_uri = {.uri = "/dashboard.css", .method = HTTP_GET, .handler = web_ui_css_get_handler};
+static const web_route_t web_ui_css_uri = {.uri = "/dashboard.css", .method = HTTP_GET, .handler = web_ui_css_get_handler};
 
-static esp_err_t web_ui_alpine_js_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_alpine_js_get_handler(web_request_t *req) {
   const compressed_asset_t *asset = portal_alpine_asset();
   return serve_asset(req, "application/javascript", NULL, asset->raw_size, asset->etag,
                      asset->data, asset->size, asset->gzip_etag);
 }
-static const httpd_uri_t web_ui_alpine_js_uri = {
+static const web_route_t web_ui_alpine_js_uri = {
     .uri = "/alpinejs.min.js", .method = HTTP_GET, .handler = web_ui_alpine_js_get_handler};
 
 // Self-hosted Caprasimo/Figtree woff2 files -- see dashboard.html's own
 // comment for why these are embedded rather than loaded from Google's CDN.
-static esp_err_t web_ui_font_caprasimo_400_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_font_caprasimo_400_get_handler(web_request_t *req) {
   return serve_asset(req, "font/woff2", web_ui_font_caprasimo_400_start,
                      web_ui_font_caprasimo_400_end - web_ui_font_caprasimo_400_start, ASSET_caprasimo_400_ETAG, NULL, 0, NULL);
 }
-static const httpd_uri_t web_ui_font_caprasimo_400_uri = {
+static const web_route_t web_ui_font_caprasimo_400_uri = {
     .uri = "/fonts/caprasimo-400.woff2", .method = HTTP_GET, .handler = web_ui_font_caprasimo_400_get_handler};
 
-static esp_err_t web_ui_font_figtree_400_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_font_figtree_400_get_handler(web_request_t *req) {
   return serve_asset(req, "font/woff2", web_ui_font_figtree_400_start,
                      web_ui_font_figtree_400_end - web_ui_font_figtree_400_start, ASSET_figtree_400_ETAG, NULL, 0, NULL);
 }
-static const httpd_uri_t web_ui_font_figtree_variable_uri = {
+static const web_route_t web_ui_font_figtree_variable_uri = {
     .uri = "/fonts/figtree-variable.woff2", .method = HTTP_GET, .handler = web_ui_font_figtree_400_get_handler};
-static const httpd_uri_t web_ui_font_figtree_400_uri = {
+static const web_route_t web_ui_font_figtree_400_uri = {
     .uri = "/fonts/figtree-400.woff2", .method = HTTP_GET, .handler = web_ui_font_figtree_400_get_handler};
 
-static esp_err_t web_ui_font_figtree_600_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_font_figtree_600_get_handler(web_request_t *req) {
   return serve_asset(req, "font/woff2", web_ui_font_figtree_600_start,
                      web_ui_font_figtree_600_end - web_ui_font_figtree_600_start, ASSET_figtree_600_ETAG, NULL, 0, NULL);
 }
-static const httpd_uri_t web_ui_font_figtree_600_uri = {
+static const web_route_t web_ui_font_figtree_600_uri = {
     .uri = "/fonts/figtree-600.woff2", .method = HTTP_GET, .handler = web_ui_font_figtree_600_get_handler};
 
-static esp_err_t web_ui_font_figtree_700_get_handler(httpd_req_t *req) {
+static esp_err_t web_ui_font_figtree_700_get_handler(web_request_t *req) {
   return serve_asset(req, "font/woff2", web_ui_font_figtree_700_start,
                      web_ui_font_figtree_700_end - web_ui_font_figtree_700_start, ASSET_figtree_700_ETAG, NULL, 0, NULL);
 }
-static const httpd_uri_t web_ui_font_figtree_700_uri = {
+static const web_route_t web_ui_font_figtree_700_uri = {
     .uri = "/fonts/figtree-700.woff2", .method = HTTP_GET, .handler = web_ui_font_figtree_700_get_handler};
 
 // cJSON_AddNumberToObject widens our floats to double and prints the
@@ -428,19 +429,18 @@ char *rest_api_reading_json(const sensor_reading_t *r) {
   return json;
 }
 
-static esp_err_t reading_get_handler(httpd_req_t *req) {
+static esp_err_t reading_get_handler(web_request_t *req) {
   if (auth_required(req)) return ESP_FAIL;
   sensor_reading_t r;
   sensors_get_last_reading(&r);
 
   char *json = rest_api_reading_json(&r);
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_sendstr(req, json);
-  free(json);
+  web_set_type(req, "application/json");
+  web_send_owned(req, json);
   return ESP_OK;
 }
 
-static const httpd_uri_t reading_uri = {
+static const web_route_t reading_uri = {
     .uri = "/api/reading",
     .method = HTTP_GET,
     .handler = reading_get_handler,
@@ -453,7 +453,7 @@ static const httpd_uri_t reading_uri = {
 // weak signal after roaming to a farther AP within the same SSID). No
 // caching here: this is meant to answer "how's the signal right now," not
 // "how was it at boot."
-static esp_err_t wifi_get_handler(httpd_req_t *req) {
+static esp_err_t wifi_get_handler(web_request_t *req) {
   if (auth_required(req)) return ESP_FAIL;
   wifi_ap_record_t info;
   esp_err_t err = esp_wifi_sta_get_ap_info(&info);
@@ -472,19 +472,18 @@ static esp_err_t wifi_get_handler(httpd_req_t *req) {
 
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_sendstr(req, json);
-  free(json);
+  web_set_type(req, "application/json");
+  web_send_owned(req, json);
   return ESP_OK;
 }
 
-static const httpd_uri_t wifi_get_uri = {
+static const web_route_t wifi_get_uri = {
     .uri = "/api/wifi",
     .method = HTTP_GET,
     .handler = wifi_get_handler,
 };
 
-static esp_err_t devices_wifi_get_handler(httpd_req_t *req) {
+static esp_err_t devices_wifi_get_handler(web_request_t *req) {
   if (auth_required(req)) return ESP_FAIL;
   wifi_ap_record_t info;
   bool monitor_connected = esp_wifi_sta_get_ap_info(&info) == ESP_OK;
@@ -501,13 +500,12 @@ static esp_err_t devices_wifi_get_handler(httpd_req_t *req) {
   else cJSON_AddNullToObject(display, "rssi");
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  esp_err_t result = httpd_resp_sendstr(req, json);
-  free(json);
+  web_set_type(req, "application/json");
+  web_set_header(req, "Cache-Control", "no-store");
+  esp_err_t result = web_send_owned(req, json);
   return result;
 }
-static const httpd_uri_t devices_wifi_get_uri = {
+static const web_route_t devices_wifi_get_uri = {
     .uri = "/api/devices/wifi", .method = HTTP_GET, .handler = devices_wifi_get_handler,
 };
 
@@ -536,18 +534,18 @@ static void settings_to_json(const settings_t *s, cJSON *root) {
   cJSON_AddNumberToObject(root, "breathing_exponent", round_to(s->breathing_exponent, 0.1));
 }
 
-static esp_err_t settings_get_handler(httpd_req_t *req) {
-  bool device_settings = !req->user_ctx && !dashboard_auth_is_remote(req) && !dashboard_auth_check(req);
+static esp_err_t settings_get_handler(web_request_t *req) {
+  bool device_settings = !web_request_is_tunnel(req) && !dashboard_auth_is_remote(req) && !dashboard_auth_check(req);
   if (!device_settings && auth_required(req)) return ESP_FAIL;
   settings_t *s = buffer_memory_calloc(1, sizeof *s);
-  if (!s) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
+  if (!s) return web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
   settings_get(s);
 
   cJSON *root = cJSON_CreateObject();
-  if (!root) { free(s); return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory"); }
+  if (!root) { free(s); return web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory"); }
   settings_to_json(s, root);
   free(s);
-  if (req->user_ctx || device_settings || dashboard_auth_is_remote(req)) {
+  if (web_request_is_tunnel(req) || device_settings || dashboard_auth_is_remote(req)) {
     cJSON_DeleteItemFromObject(root, "google_sheets_secret");
     cJSON_DeleteItemFromObject(root, "google_sheets_webhook_url");
     cJSON_AddBoolToObject(root, "credentials_redacted", true);
@@ -555,14 +553,13 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
 
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
-  if (!json) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_sendstr(req, json);
-  free(json);
+  if (!json) return web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
+  web_set_type(req, "application/json");
+  web_send_owned(req, json);
   return ESP_OK;
 }
 
-static const httpd_uri_t settings_get_uri = {
+static const web_route_t settings_get_uri = {
     .uri = "/api/settings",
     .method = HTTP_GET,
     .handler = settings_get_handler,
@@ -577,30 +574,30 @@ static const httpd_uri_t settings_get_uri = {
 // "leave whatever was there before". Colours are the compatibility exception:
 // older clients may omit them, retaining the saved palette. Breathing shape
 // likewise retains its saved value when omitted.
-static esp_err_t settings_post_handler(httpd_req_t *req) {
+static esp_err_t settings_post_handler(web_request_t *req) {
   // Local commissioning is allowed before the owner sets the first password.
   // Loopback tunnel visitors always require a session, even before setup.
   if ((dashboard_auth_is_configured() || dashboard_auth_is_remote(req)) && auth_required(req)) return ESP_FAIL;
-  if (!dashboard_auth_check_csrf(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Invalid request origin");
+  if (!dashboard_auth_check_csrf(req)) return web_send_err(req, HTTPD_403_FORBIDDEN, "Invalid request origin");
   if (req->content_len <= 0 || req->content_len >= 8192) {
-    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Request body too large");
+    web_send_err(req, HTTPD_400_BAD_REQUEST, "Request body too large");
     return ESP_FAIL;
   }
 
   char *body = buffer_memory_calloc(req->content_len + 1, 1);
   if (!body) {
-    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
+    web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
     return ESP_FAIL;
   }
-  int received = 0;
+  size_t received = 0;
   while (received < req->content_len) {
-    int ret = httpd_req_recv(req, body + received, req->content_len - received);
+    int ret = web_recv(req, body + received, req->content_len - received);
     if (ret <= 0) {
       if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
         continue;
       }
       free(body);
-      httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read request body");
+      web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read request body");
       return ESP_FAIL;
     }
     received += ret;
@@ -610,7 +607,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
   cJSON *root = cJSON_Parse(body);
   free(body);
   if (root == NULL) {
-    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+    web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
     return ESP_FAIL;
   }
 
@@ -618,7 +615,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
   settings_t *snapshots = buffer_memory_calloc(2, sizeof *snapshots);
   if (!snapshots) {
     cJSON_Delete(root);
-    return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
+    return web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
   }
   settings_t *s = &snapshots[0], *current = &snapshots[1];
   settings_get(current);
@@ -689,7 +686,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
   if (item != NULL && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
       item->valuedouble < 0 || item->valuedouble > 255 || floor(item->valuedouble) != item->valuedouble)) {
     cJSON_Delete(root);
-    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Minimum brightness must be an integer from 0 to 255");
+    web_send_err(req, HTTPD_400_BAD_REQUEST, "Minimum brightness must be an integer from 0 to 255");
     free(snapshots);
     return ESP_FAIL;
   }
@@ -698,7 +695,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
   if (item != NULL && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
       item->valuedouble < 0 || item->valuedouble > 255 || floor(item->valuedouble) != item->valuedouble)) {
     cJSON_Delete(root);
-    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Maximum brightness must be an integer from 0 to 255");
+    web_send_err(req, HTTPD_400_BAD_REQUEST, "Maximum brightness must be an integer from 0 to 255");
     free(snapshots);
     return ESP_FAIL;
   }
@@ -717,7 +714,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
       memcpy(colors[i], item->valuestring, 8);
     } else {
       cJSON_Delete(root);
-      httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Colours must be #RRGGBB");
+      web_send_err(req, HTTPD_400_BAD_REQUEST, "Colours must be #RRGGBB");
       free(snapshots);
       return ESP_FAIL;
     }
@@ -727,7 +724,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
   esp_err_t err = settings_set(s);
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "Rejected settings update: %s", esp_err_to_name(err));
-    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid settings values");
+    web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid settings values");
     free(snapshots);
     return ESP_FAIL;
   }
@@ -737,23 +734,23 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
   uint32_t revision = ws_server_settings_revision(true);
   ws_server_broadcast_settings_changed();
 
-  httpd_resp_set_type(req, "application/json");
+  web_set_type(req, "application/json");
   char response[128];
   snprintf(response, sizeof(response), "{\"success\":true,\"settings_revision\":%lu,\"cloudflare_token_set\":%s}",
            (unsigned long) revision, *s->cloudflare.token ? "true" : "false");
-  httpd_resp_sendstr(req, response);
+  web_sendstr(req, response);
   if (memcmp(&current->cloudflare, &s->cloudflare, sizeof s->cloudflare)) cloudflare_tunnel_start();
   free(snapshots);
   return ESP_OK;
 
 invalid_cloudflare:
   cJSON_Delete(root);
-  httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid Cloudflare setting type or length");
+  web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid Cloudflare setting type or length");
   free(snapshots);
   return ESP_FAIL;
 }
 
-static const httpd_uri_t settings_post_uri = {
+static const web_route_t settings_post_uri = {
     .uri = "/api/settings",
     .method = HTTP_POST,
     .handler = settings_post_handler,
@@ -885,7 +882,7 @@ esp_err_t rest_api_history_import(const char *body, size_t size) {
   return err;
 }
 
-static esp_err_t events_get_handler(httpd_req_t *req) {
+static esp_err_t events_get_handler(web_request_t *req) {
   if (auth_required(req)) return ESP_FAIL;
   cJSON *root = cJSON_CreateArray();
   for (size_t i = 0; i < EVENT_COUNT; i++) {
@@ -897,13 +894,12 @@ static esp_err_t events_get_handler(httpd_req_t *req) {
 
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_sendstr(req, json);
-  free(json);
+  web_set_type(req, "application/json");
+  web_send_owned(req, json);
   return ESP_OK;
 }
 
-static const httpd_uri_t events_get_uri = {
+static const web_route_t events_get_uri = {
     .uri = "/api/events",
     .method = HTTP_GET,
     .handler = events_get_handler,
@@ -912,23 +908,23 @@ static const httpd_uri_t events_get_uri = {
 // Queues an immediate, un-gated Sheets log tagged with the given event slug
 // -- see sheets_logger_log_event()'s own doc comment for why this bypasses
 // the periodic deadband/heartbeat check and doesn't reset its clock.
-static esp_err_t event_post_handler(httpd_req_t *req) {
+static esp_err_t event_post_handler(web_request_t *req) {
   if (auth_required(req)) return ESP_FAIL;
-  if (!dashboard_auth_check_csrf(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Invalid request origin");
+  if (!dashboard_auth_check_csrf(req)) return web_send_err(req, HTTPD_403_FORBIDDEN, "Invalid request origin");
   if (req->content_len <= 0 || req->content_len >= 128) {
-    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Request body too large");
+    web_send_err(req, HTTPD_400_BAD_REQUEST, "Request body too large");
     return ESP_FAIL;
   }
 
   char body[128] = {0};
-  int received = 0;
+  size_t received = 0;
   while (received < req->content_len) {
-    int ret = httpd_req_recv(req, body + received, req->content_len - received);
+    int ret = web_recv(req, body + received, req->content_len - received);
     if (ret <= 0) {
       if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
         continue;
       }
-      httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read request body");
+      web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read request body");
       return ESP_FAIL;
     }
     received += ret;
@@ -937,7 +933,7 @@ static esp_err_t event_post_handler(httpd_req_t *req) {
 
   cJSON *root = cJSON_Parse(body);
   if (root == NULL) {
-    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+    web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
     return ESP_FAIL;
   }
 
@@ -945,7 +941,7 @@ static esp_err_t event_post_handler(httpd_req_t *req) {
   const char *canonical = cJSON_IsString(item) ? event_slug_canonical(item->valuestring) : NULL;
   cJSON_Delete(root);
   if (canonical == NULL) {
-    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown event -- see GET /api/events for valid slugs");
+    web_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown event -- see GET /api/events for valid slugs");
     return ESP_FAIL;
   }
 
@@ -969,12 +965,12 @@ static esp_err_t event_post_handler(httpd_req_t *req) {
 
   char resp_body[64];
   snprintf(resp_body, sizeof(resp_body), "{\"success\":true,\"sheets_queued\":%s}", sheets_queued ? "true" : "false");
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_sendstr(req, resp_body);
+  web_set_type(req, "application/json");
+  web_sendstr(req, resp_body);
   return ESP_OK;
 }
 
-static const httpd_uri_t event_post_uri = {
+static const web_route_t event_post_uri = {
     .uri = "/api/event",
     .method = HTTP_POST,
     .handler = event_post_handler,
@@ -988,7 +984,7 @@ static const httpd_uri_t event_post_uri = {
 // seconds before "now" (this response's own timestamp), not a raw uptime
 // value the client would otherwise need this device's boot time to
 // interpret.
-static esp_err_t history_get_handler(httpd_req_t *req) {
+static esp_err_t history_get_handler(web_request_t *req) {
   if (auth_required(req)) return ESP_FAIL;
   uint32_t now_s = (uint32_t) (esp_timer_get_time() / 1000000);
 
@@ -998,8 +994,8 @@ static esp_err_t history_get_handler(httpd_req_t *req) {
   history_sample_t *samples = buffer_memory_alloc(SENSORS_HISTORY_CAPACITY * sizeof(*samples));
 #endif
   if (!samples) {
-    httpd_resp_set_status(req, "503 Service Unavailable");
-    return httpd_resp_sendstr(req, "History buffer unavailable");
+    web_set_status(req, "503 Service Unavailable");
+    return web_sendstr(req, "History buffer unavailable");
   }
   size_t sample_count = sensors_get_history(samples, SENSORS_HISTORY_CAPACITY);
 
@@ -1031,32 +1027,31 @@ static esp_err_t history_get_handler(httpd_req_t *req) {
 
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_sendstr(req, json);
-  free(json);
+  web_set_type(req, "application/json");
+  web_send_owned(req, json);
   return ESP_OK;
 }
 
-static const httpd_uri_t history_get_uri = {
+static const web_route_t history_get_uri = {
     .uri = "/api/history",
     .method = HTTP_GET,
     .handler = history_get_handler,
 };
 
-static esp_err_t settings_status_handler(httpd_req_t *req) {
+static esp_err_t settings_status_handler(web_request_t *req) {
   if (auth_required(req)) return ESP_FAIL;
   uint32_t revision = ws_server_settings_revision(false);
   char json[112];
   snprintf(json, sizeof(json), "{\"settings_revision\":%lu,\"display_applied\":%s}",
            (unsigned long) revision, ws_server_settings_applied(revision) ? "true" : "false");
-  httpd_resp_set_type(req, "application/json");
-  return httpd_resp_sendstr(req, json);
+  web_set_type(req, "application/json");
+  return web_sendstr(req, json);
 }
-static const httpd_uri_t settings_status_uri = {
+static const web_route_t settings_status_uri = {
     .uri = "/api/settings/status", .method = HTTP_GET, .handler = settings_status_handler,
 };
 
-static esp_err_t cloudflare_status_handler(httpd_req_t *req) {
+static esp_err_t cloudflare_status_handler(web_request_t *req) {
   if (auth_required(req)) return ESP_FAIL;
   cloudflare_status_t status;
   cloudflare_tunnel_get_status(&status);
@@ -1071,11 +1066,11 @@ static esp_err_t cloudflare_status_handler(httpd_req_t *req) {
   char json[160];
   snprintf(json, sizeof(json), "{\"state\":\"%s\",\"connections\":%lu,\"configured_connections\":%lu}",
            state, (unsigned long)status.connections, (unsigned long)status.configured_connections);
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  return httpd_resp_sendstr(req, json);
+  web_set_type(req, "application/json");
+  web_set_header(req, "Cache-Control", "no-store");
+  return web_sendstr(req, json);
 }
-static const httpd_uri_t cloudflare_status_uri = {
+static const web_route_t cloudflare_status_uri = {
     .uri = "/api/cloudflare/status", .method = HTTP_GET, .handler = cloudflare_status_handler,
 };
 
@@ -1085,6 +1080,10 @@ static const httpd_uri_t cloudflare_status_uri = {
 #define REST_API_MAX_OPEN_SOCKETS 7
 
 static httpd_handle_t s_server = NULL;
+
+esp_err_t rest_api_queue_work(httpd_work_fn_t work, void *arg) {
+  return s_server ? httpd_queue_work(s_server, work, arg) : ESP_ERR_INVALID_STATE;
+}
 
 static void register_http_stack(void *arg) {
   (void)arg;
@@ -1121,43 +1120,43 @@ httpd_handle_t rest_api_start(void) {
   ESP_ERROR_CHECK(httpd_start(&server, &config));
   if (httpd_queue_work(server, register_http_stack, NULL) != ESP_OK)
     ESP_LOGW(TAG, "HTTP stack measurement registration failed");
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &auth_status_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &auth_login_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &auth_setup_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &auth_password_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &auth_logout_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &reading_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &wifi_get_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &devices_wifi_get_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_get_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_status_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &cloudflare_status_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_post_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &events_get_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &event_post_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &history_get_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_burn_graph_js_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_uplot_js_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_uplot_css_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_html_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_login_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_js_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_css_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_alpine_js_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_font_caprasimo_400_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_font_figtree_variable_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_font_figtree_400_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_font_figtree_600_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_ui_font_figtree_700_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_stove_svg_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_favicon_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_apple_icon_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_icon_192_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_icon_512_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_manifest_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_startup_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_service_worker_uri));
-  ESP_ERROR_CHECK(httpd_register_uri_handler(server, &web_loading_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &auth_status_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &auth_login_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &auth_setup_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &auth_password_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &auth_logout_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &reading_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &wifi_get_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &devices_wifi_get_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &settings_get_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &settings_status_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &cloudflare_status_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &settings_post_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &events_get_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &event_post_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &history_get_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_burn_graph_js_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_uplot_js_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_uplot_css_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_html_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_login_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_js_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_css_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_alpine_js_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_font_caprasimo_400_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_font_figtree_variable_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_font_figtree_400_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_font_figtree_600_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_ui_font_figtree_700_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_stove_svg_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_favicon_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_apple_icon_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_icon_192_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_icon_512_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_manifest_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_startup_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_service_worker_uri));
+  ESP_ERROR_CHECK(web_register_handler(server, &web_loading_uri));
   s_server = server;
   return server;
 }

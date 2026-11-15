@@ -298,10 +298,16 @@ The PageKite client is no longer built. Its old blob tail exists only for NVS
 compatibility and is never exposed or used for connections.
 
 Public requests are restricted to the configured HTTPS hostname and dashboard
-route allowlist, and forwarded to fixed loopback HTTP port 80. Remote ingress
-settings cannot select another LAN destination. Cookie, Origin and asset queries
-are preserved. OTA, Wi-Fi setup and the LAN device WebSocket remain private.
-The display's LAN connection is unchanged.
+route allowlist. Assets and API responses are served directly over HTTP/2,
+without loopback sockets or another HTTP/1.1 parser. The same application
+handlers and authentication run on the shared HTTP task for both transports.
+Captured headers, bounded bodies and response data use PSRAM; the small atomic
+control blocks stay in internal RAM. Flash assets stream in 512-byte chunks;
+clients without gzip use the existing ROM inflater with a PSRAM dictionary.
+At most 16 direct requests are pending, with a 10-second handoff deadline.
+Cookie, Origin and asset-version checks are shared with LAN handling. OTA,
+Wi-Fi setup and the LAN device WebSocket remain private. The display's LAN
+connection is unchanged.
 
 The embedded dashboard asks you to choose a password on first use; do this
 from the monitor's home-network address. Initial setup is blocked through
@@ -350,6 +356,10 @@ build-time gzip of the unchanged login template keep the existing OTA partitions
 Host checks: `tools/test_cloudflare_settings.py`, `tools/test_cloudflare_tunnel.py`,
 `tools/test_cloudflare_memory.py`, `tools/test_login_compression.py`, and
 `node tools/test_settings_sync.js`. These do not establish device stability.
+`tools/test_direct_http2.py /path/to/miniz-v114.c` exercises the actual adapter,
+bridge and authentication under ASan/UBSan, including cancellation, timeouts,
+allocation failure and multi-block identity streaming. The upstream miniz
+reference supplies the ESP32 ROM tinfl API for this host test.
 
 ## Woodstove event logging (once connected to WiFi)
 

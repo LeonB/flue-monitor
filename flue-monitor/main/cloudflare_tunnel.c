@@ -1,7 +1,7 @@
 #include "cloudflare_tunnel.h"
 #include "rest_api.h"
 #include "cloudflare_policy.h"
-#include "cloudflare_queue.h"
+#include "cloudflare_http.h"
 #include "settings.h"
 #include "buffer_memory.h"
 #include "stack_diagnostics.h"
@@ -54,8 +54,8 @@ static void on_event(void *arg, const cft_event_t *event) {
 }
 static void on_request(void *arg, cft_stream_t *stream, const cft_request_t *req) {
   const cloudflare_settings_t *config = arg;
-  // Host and HTTPS come from the edge; loopback peer classification in HTTPD
-  // still enforces remote authentication/CSRF and forbids LAN-only enrollment.
+  // Host and HTTPS come from the edge. The shared request adapter always marks
+  // direct requests as remote, including authentication and CSRF checks.
   if (!req->authority || strcasecmp(req->authority, config->hostname) ||
       !req->scheme || strcmp(req->scheme, "https")) {
     cft_stream_respond(stream, 403, "text/plain", "HTTPS hostname required\n", 24);
@@ -73,17 +73,14 @@ static void on_request(void *arg, cft_stream_t *stream, const cft_request_t *req
       return;
     }
   }
-  // Never use remote ingress service URLs as origin addresses. Cookie, Origin,
-  // Host and asset queries pass through the bounded HTTP proxy unchanged.
   if (!strcmp(req->method, "GET")) {
     if (req->content_length > 0) {
       cft_stream_respond(stream, 400, "text/plain", "GET body not supported\n", 23);
       return;
     }
-    if (!rest_api_tunnel_font(stream, req->path)) queue_get(stream, esp_timer_get_time());
-  } else if (cft_stream_proxy(stream, "http://127.0.0.1:80") < 0) {
-    cft_stream_respond(stream, 502, "text/plain", "Proxy unavailable\n", 18);
+    if (rest_api_tunnel_font(stream, req->path)) return;
   }
+  cloudflare_http_request(stream, req, esp_timer_get_time());
 }
 static void on_poll(void *arg) {
   (void)arg;
@@ -96,7 +93,7 @@ static void on_poll(void *arg) {
     draining = true;
   }
   xSemaphoreGive(control);
-  if (!draining) pump_gets(esp_timer_get_time());
+  if (!draining) cloudflare_http_poll(esp_timer_get_time());
 }
 static void task(void *arg) {
   (void)arg;
@@ -122,6 +119,7 @@ static void task(void *arg) {
       .token = config->token, .num_connections = config->connections,
       .on_request = on_request, .request_arg = config, .on_event = on_event,
       .on_poll = on_poll,
+      .poll_interval_ms = cloudflare_http_wait_ms,
       .connector_id = connector, .arch = CONFIG_IDF_TARGET,
       .max_concurrent_streams = 16, .max_request_body = 8192,
       .max_origin_connections = 4, .stream_window = 4096, .proxy_buffer_size = 4096,
@@ -148,7 +146,6 @@ static void task(void *arg) {
     active = NULL;
     xSemaphoreGive(control);
     cft_tunnel_free(tunnel);
-    reset_gets();
     memset(config, 0, sizeof *config);
     // The library handles network reconnects. A completed run means a saved
     // configuration change; resnapshot immediately, including disable/re-enable.

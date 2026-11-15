@@ -4,6 +4,7 @@ Real cJSON and production C functions; network, NVS and RTOS are deterministic s
 Does not contact Bosch, use real tokens or write device settings.
 """
 from pathlib import Path
+from web_test_shim import native_source
 import subprocess
 import tempfile
 import base64
@@ -11,7 +12,7 @@ import hashlib
 from urllib.parse import urlparse, parse_qs
 
 root = Path(__file__).resolve().parents[1]
-src = (root / 'main/bosch_client.c').read_text()
+src = native_source((root / 'main/bosch_client.c').read_text(), tunnel='false')
 core = src[src.index('#define CLIENT_ID'):src.index('static void task(')]
 start = core.index('static cJSON *request(')
 end = core.index('// One NVS value', start)
@@ -77,7 +78,7 @@ static esp_err_t nvs_set_str(int h,const char *key,const char *s){if(storage_fai
 static esp_err_t nvs_erase_key(int h,const char *key){if(storage_fails)return -1;free(stored);stored=NULL;return 0;}
 static esp_err_t nvs_get_str(int h,const char *key,char *p,size_t *n){if(!stored)return 2;if(p){assert(*n>=strlen(stored)+1);strcpy(p,stored);}*n=strlen(stored)+1;return 0;}
 typedef struct {int event_id;void *user_data;int data_len;void *data;} esp_http_client_event_t;
-typedef struct {int method;int content_len;const char *body;} httpd_req_t;
+typedef struct {int method;size_t content_len;const char *body;} httpd_req_t;
 static bool authorized, csrf; static int response_code; static char response[5000]; static char *queued;
 static bool dashboard_auth_check(httpd_req_t *r){return authorized;}
 static bool dashboard_auth_check_csrf(httpd_req_t *r){return csrf;}
