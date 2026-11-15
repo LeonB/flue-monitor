@@ -54,3 +54,11 @@ const busy=harness();busy.setLock(true);assert.equal(busy.send(),'busy');assert.
 const failed=harness();failed.setFail(true);assert.throws(()=>failed.send(),/write failed/);assert.equal(failed.releases,1);
 const wide=harness();wide.send(Object.fromEntries(Array.from({length:30},(_,i)=>['sensor_'+i,String(i)])));assert.equal(wide.rows[0].length,37);
 console.log('PASS actual Sheets handler: dynamic fields, reordered headers, old rows, types, blanks, formula escaping, authentication, locking and column expansion');
+
+// The existing extensible deployment appends new context fields without a script update.
+const outside=harness();outside.send({outdoor_temperature:'7.8'});
+assert.equal(value(outside,'outdoor_temperature'),7.8);
+assert.equal(outside.rows[0].filter(x=>x==='outdoor_temperature').length,1);
+outside.send({outdoor_temperature:''});assert.equal(value(outside,'outdoor_temperature'),'');
+outside.send({outdoor_temperature:'-2.5'});assert.equal(value(outside,'outdoor_temperature'),-2.5);
+console.log('PASS optional outdoor column, blanks and negative readings with unchanged Apps Script');

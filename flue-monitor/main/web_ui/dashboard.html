@@ -73,7 +73,7 @@ html,body{background:#f5ead8;color:#201e1d;color-scheme:light}
   .signal-bars i.lit { opacity: 1; }
   .connection-detail .signal-label { font-weight: 600; }
   .glow-wrap { flex: 1; display: grid; place-items: center; padding: 12px 24px; min-height: 220px; }
-  .dashboard-tools { display: flex; align-items: center; gap: 18px; }
+  .dashboard-tools { display: flex; align-items: center; gap: 14px; }
   .room-reading { display: inline-flex; align-items: center; gap: 7px; color: var(--color-neutral-700); white-space: nowrap; }
   .room-reading svg { width: 17px; height: 17px; flex: none; }
   .room-reading-value { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -230,6 +230,10 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
           <span class="room-reading" :class="{ 'is-unavailable': !boschHasTemperature }" x-show="bosch.linked" x-cloak :aria-label="'Room temperature: ' + boschTemperature" :title="'Room temperature: ' + boschTemperature">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7M5 9v11h14V9M10 20v-6h4v6"/></svg>
             <span class="room-reading-value" x-text="boschHasTemperature ? bosch.temperature_c.toFixed(1).replace('.', ',') + '°' : '—'"></span>
+          </span>
+          <span class="room-reading" :class="{ 'is-unavailable': !boschHasOutdoorTemperature }" x-show="bosch.linked" x-cloak :aria-label="'Outdoor temperature: ' + boschOutdoorTemperature" :title="'Outdoor temperature: ' + boschOutdoorTemperature">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v2M2 8h2m.8-4.2 1.4 1.4M12.8 3.8l-1.4 1.4M11 8a3 3 0 1 0-5 2.2M7 20a4 4 0 1 1 .8-7.9 5 5 0 0 1 9.7 1.4A3.3 3.3 0 1 1 18 20H7Z"/></svg>
+            <span class="room-reading-value" x-text="boschHasOutdoorTemperature ? bosch.outdoor_temperature_c.toFixed(1).replace('.', ',') + '°' : '—'"></span>
           </span>
         <button class="btn btn-secondary btn-icon" aria-label="Settings" @click="openSettings()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"></path></svg>

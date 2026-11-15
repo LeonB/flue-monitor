@@ -1,5 +1,28 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-15 Bosch outdoor temperature DEPLOYED
+
+Bosch outdoor_t1 is fetched read-only by the existing Bosch worker every900s,
+independently of the room reading. Valid range-40..60C; cache expires after1800s.
+Gateway switching/disconnect invalidates outdoor cache. API includes independent
+outdoor availability/value/age/http status. Homescreen shows a sun/cloud SVG next
+to the room reading; tooltip and screen-reader label retain Outdoor temperature.
+Unavailable values show a dash. Existing periodic/event Sheets rows include
+outdoor_temperature from cache (event snapshot at tap). Existing Code.gs dynamic
+column behavior tested locally; no Apps Script deployment or live Sheet readback.
+
+Eight relevant host programs passed: Bosch ASan/UBSan, Bosch header, Sheets memory,
+Bosch UI, Sheets dynamic columns, asset versions, event log, burn graph. Icon-only
+change additionally passed Bosch UI/asset versions and git diff --check.
+IDF6.0.3 final image1516832B,19168B OTA free; SHA256
+0ec3658b8ec689daabad631ff08f81014b5dd023b07bb8db88ec4cf44b466dfd.
+Frozen artifacts/source/config/logs: .cache/bosch-outdoor/0ec3658b8ec689da/.
+OTA succeeded to monitor192.168.1.137. Backup/independent restore verification
+preserved360samples/14events: .cache/ota-history/20261115T225314260430Z/.
+Chrome production login and visual verification confirmed room21.7C and outdoor8.0C
+with the requested icon (no Outside text). No fake production event, display flash,
+USB open or watchdog monitoring restart. Owner requested committing the outdoor feature; nothing pushed.
+
 ## 2026-11-15 grouped burn log and Coaling DEPLOYED
 
 Owner approved the local design and explicitly requested implementation+OTA.

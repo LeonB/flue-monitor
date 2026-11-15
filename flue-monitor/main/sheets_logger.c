@@ -117,7 +117,8 @@ static esp_err_t webhook_http_event_handler(esp_http_client_event_t *evt) {
 typedef struct {
   char label[EVENT_LABEL_MAX_LEN];
   sensor_reading_t reading;
-  double room_temperature_c; // snapshot at the tap; NAN when unavailable
+  double room_temperature_c; // snapshots at the tap; NAN when unavailable
+  double outdoor_temperature_c;
   int64_t enqueued_us;
   time_t enqueued_epoch_s;
 } queued_event_t;
@@ -150,22 +151,23 @@ static bool s_ready;
 // upload silently suppressed every subsequent attempt until the next real
 // change cleared an ever-growing threshold).
 static bool log_to_sheets(const sensor_reading_t *reading, const settings_t *settings, const char *event,
-                          int64_t age_ms, time_t event_epoch_s, double room_temperature_c) {
+                          int64_t age_ms, time_t event_epoch_s, double room_temperature_c, double outdoor_temperature_c) {
   if (settings->google_sheets_webhook_url[0] == '\0') {
     ESP_LOGD(TAG, "No Google Sheets webhook configured yet -- skipping log");
     return false;
   }
 
   // Empty query values become blank cells, never a fabricated 0°C reading.
-  char room[16] = "";
+  char room[16] = "", outdoor[16] = "";
   if (isfinite(room_temperature_c)) snprintf(room,sizeof room,"%.1f",room_temperature_c);
+  if (isfinite(outdoor_temperature_c)) snprintf(outdoor,sizeof outdoor,"%.1f",outdoor_temperature_c);
   char *url = s_buffers->url;
   int len = snprintf(url, sizeof s_buffers->url,
-                     "%s?secret=%s&thermocouple=%.1f&cold_junction=%.1f&rate=%.2f&zone=%s&event=%s&age_ms=%lld&event_ts=%lld&room_temperature=%s",
+                     "%s?secret=%s&thermocouple=%.1f&cold_junction=%.1f&rate=%.2f&zone=%s&event=%s&age_ms=%lld&event_ts=%lld&room_temperature=%s&outdoor_temperature=%s",
                      settings->google_sheets_webhook_url, settings->google_sheets_secret, reading->thermocouple_c,
                      reading->cold_junction_c, reading->thermocouple_rate_c_per_min,
                      thermocouple_zone_name(reading->thermocouple_zone), event, (long long) age_ms,
-                     (long long) event_epoch_s, room);
+                     (long long) event_epoch_s, room, outdoor);
   if (len < 0 || (size_t) len >= sizeof s_buffers->url) {
     ESP_LOGW(TAG, "Webhook URL too long for the buffer -- skipping log (check google_sheets_webhook_url)");
     return false;
@@ -248,6 +250,8 @@ bool sheets_logger_log_event(const char *event) {
   sensors_get_last_reading(&item.reading);
   item.room_temperature_c = NAN;
   bosch_client_get_temperature(&item.room_temperature_c);
+  item.outdoor_temperature_c = NAN;
+  bosch_client_get_outdoor_temperature(&item.outdoor_temperature_c);
   item.enqueued_us = esp_timer_get_time();
   item.enqueued_epoch_s = wall_clock_synced() ? time(NULL) : 0;
   if (xQueueSend(s_event_queue, &item, 0) != pdTRUE) {
@@ -274,7 +278,7 @@ static void sheets_logger_task(void *arg) {
       settings_t *settings = &s_buffers->settings;
       settings_get(settings);
       int64_t age_ms = (esp_timer_get_time() - item.enqueued_us) / 1000;
-      log_to_sheets(&item.reading, settings, item.label, age_ms, item.enqueued_epoch_s, item.room_temperature_c);
+      log_to_sheets(&item.reading, settings, item.label, age_ms, item.enqueued_epoch_s, item.room_temperature_c, item.outdoor_temperature_c);
       continue;
     }
 
@@ -311,8 +315,10 @@ static void sheets_logger_task(void *arg) {
 
     double room_temperature_c = NAN;
     bosch_client_get_temperature(&room_temperature_c);
+    double outdoor_temperature_c = NAN;
+    bosch_client_get_outdoor_temperature(&outdoor_temperature_c);
     time_t event_epoch_s = wall_clock_synced() ? time(NULL) : 0;
-    if (log_to_sheets(&reading, settings, delta_due ? "temp_change" : "heartbeat", 0, event_epoch_s, room_temperature_c)) {
+    if (log_to_sheets(&reading, settings, delta_due ? "temp_change" : "heartbeat", 0, event_epoch_s, room_temperature_c, outdoor_temperature_c)) {
       s_last_logged_thermocouple_c = reading.thermocouple_c;
       s_last_log_us = now_us;
     }

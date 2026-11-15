@@ -197,6 +197,14 @@ function app() {
     get boschTemperature() {
       return this.boschHasTemperature ? this.bosch.temperature_c.toFixed(1) + ' °C' : 'Unavailable';
     },
+    get boschHasOutdoorTemperature() {
+      return this.bosch.linked && this.bosch.outdoor_available &&
+        Number.isFinite(this.bosch.outdoor_temperature_c) &&
+        Date.now() - this.boschReceivedMs < 20000;
+    },
+    get boschOutdoorTemperature() {
+      return this.boschHasOutdoorTemperature ? this.bosch.outdoor_temperature_c.toFixed(1) + ' °C' : 'Unavailable';
+    },
     get boschZoneOptions() {
       const reported = Array.isArray(this.bosch.zones) ? this.bosch.zones : [];
       // Retain the saved/draft selection while discovery is pending or offline.
@@ -239,7 +247,7 @@ function app() {
           }
         }
       } catch {
-        this.bosch = { ...this.bosch, available: false, state: 'unavailable', auth_url: null };
+        this.bosch = { ...this.bosch, available: false, outdoor_available: false, state: 'unavailable', auth_url: null };
       } finally { this.boschRequest = false; }
     },
     async boschAction(action) {

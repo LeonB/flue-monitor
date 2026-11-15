@@ -41,7 +41,7 @@ static int64_t clock_us=1000000000;
 static bool fail_alloc,fail_queue,fail_task,fail_client,transport_error,event_mode;
 static unsigned live_buffers,queues,task_creates,begins,ends,performs,cleanups,loops;
 static unsigned registration;
-static bool succeeded;
+static bool succeeded, outdoor_valid=true;
 static jmp_buf stop;
 static const char *reply="ok";
 static char sent_url[1024];
@@ -61,6 +61,7 @@ void sensors_get_last_reading(sensor_reading_t *r) {*r=(sensor_reading_t){.therm
 bool thermocouple_reading_plausible(float c) {return c>=-40 && c<=600;}
 const char *thermocouple_zone_name(thermocouple_zone_t z) {(void)z;return "optimal";}
 static bool bosch_client_get_temperature(double *room) {*room=19.6;return true;}
+static bool bosch_client_get_outdoor_temperature(double *out) {if(!outdoor_valid)return false;*out=7.8;return true;}
 static QueueHandle_t xQueueCreate(int count,size_t size) {assert(count==4 && size>0);if(fail_queue)return 0;queues++;return (void *)1;}
 static void vQueueDelete(QueueHandle_t q) {assert(q && queues);queues--;}
 static int xTaskCreate(void (*fn)(void *),const char *name,int size,void *arg,int priority,void *out) {
@@ -98,7 +99,7 @@ static int xQueueReceive(QueueHandle_t q,void *out,int timeout) {
  assert(q && timeout==30000);if(loops++)longjmp(stop,1);
  if(!event_mode)return 0;
  queued_event_t *item=out;memset(item,0,sizeof *item);strcpy(item->label,"added_wood");
- sensors_get_last_reading(&item->reading);item->room_temperature_c=18.5;
+ sensors_get_last_reading(&item->reading);item->room_temperature_c=18.5;item->outdoor_temperature_c=-2.5;
  item->enqueued_us=clock_us-3000000;item->enqueued_epoch_s=1704067201;return pdTRUE;
 }
 static void tick(void) {loops=0;if(!setjmp(stop))sheets_logger_task(NULL);}
@@ -119,10 +120,12 @@ int main(void) {
  fail_client=false;reply="forbidden";tick();assert(!succeeded && s_last_logged_thermocouple_c==NO_PRIOR_LOG_C);
  reply="ok";transport_error=true;tick();assert(!succeeded && s_last_logged_thermocouple_c==NO_PRIOR_LOG_C);
  transport_error=false;tick();assert(succeeded && s_last_logged_thermocouple_c>123 && s_last_log_us==clock_us);
- assert(strstr(sent_url,"room_temperature=19.6") && strstr(sent_url,"event=temp_change"));
+ assert(strstr(sent_url,"outdoor_temperature=7.8") && strstr(sent_url,"room_temperature=19.6") && strstr(sent_url,"event=temp_change"));
  unsigned previous=performs;tick();assert(performs==previous); // unchanged reading must not upload
  event_mode=true;tick();assert(performs==previous+1 && succeeded);
- assert(strstr(sent_url,"event=added_wood") && strstr(sent_url,"age_ms=3000") && strstr(sent_url,"event_ts=1704067201") && strstr(sent_url,"room_temperature=18.5"));
+ assert(strstr(sent_url,"event=added_wood") && strstr(sent_url,"age_ms=3000") && strstr(sent_url,"event_ts=1704067201") && strstr(sent_url,"room_temperature=18.5") && strstr(sent_url,"outdoor_temperature=-2.5"));
+ event_mode=false;outdoor_valid=false;s_last_logged_thermocouple_c=NO_PRIOR_LOG_C;tick();
+ assert(!strcmp(strstr(sent_url,"&outdoor_temperature="),"&outdoor_temperature="));
  assert(s_last_log_us==clock_us && begins==ends && cleanups==performs && live_buffers==1 && registration);
  vQueueDelete(s_event_queue);free(s_buffers);assert(!live_buffers && !queues);
  puts("PASS Sheets periodic/event snapshots, complete URLs, allocation/transport/rejected-response failures, unchanged retry baseline and resource lifetime");

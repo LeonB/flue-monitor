@@ -17,7 +17,7 @@ core = src[src.index('#define CLIENT_ID'):src.index('static void task(')]
 start = core.index('static cJSON *request(')
 end = core.index('// One NVS value', start)
 core = core[:start] + '''static cJSON *request(const char *url,const char *body,bool authorized) {
- request_count++; http_status=mock_http_status;
+ request_count++; http_status=mock_http_status; snprintf(last_resource,sizeof last_resource,"%s",url);
  if(body) { assert(!authorized); assert(!strcmp(url,TOKEN_URL)); snprintf(last_form,sizeof last_form,"%s",body); }
  else { assert(authorized); assert(access_token); assert(!strncmp(url,API_ROOT,strlen(API_ROOT))); }
  return mock_response ? cJSON_Parse(mock_response) : NULL;
@@ -68,7 +68,7 @@ static void *buffer_memory_calloc(size_t n,size_t s){return fail_buffer_alloc ? 
 static void esp_fill_random(void *p,size_t n){memset(p,42,n);}
 static int mock_http_status=200, request_count;
 static const char *mock_response;
-static char last_form[20000];
+static char last_form[20000], last_resource[256];
 static bool storage_fails;
 static char *stored;
 static esp_err_t nvs_open(const char *s,int mode,int *h){assert(!strcmp(s,"bosch")); *h=1;return 0;}
@@ -127,6 +127,27 @@ int main(void) {
  int zone_calls=request_count;discover_zones();assert(request_count==zone_calls);
  clock_s+=601;mock_response=NULL;discover_zones();assert(status.zone_count==2);
  mock_response="{\"value\":19.6}";assert(poll_temperature());assert(status.available && status.temperature==19.6);
+ // Optional outdoor reads share credentials but have independent validity/cadence.
+ lock=1;int64_t original_clock=clock_s;double outside=-999;
+ mock_response="{\"value\":7.8}";poll_outdoor_temperature();
+ assert(strstr(last_resource,"/resource/system/sensors/temperatures/outdoor_t1"));
+ assert(bosch_client_get_outdoor_temperature(&outside)&&outside==7.8);
+ assert(status.available&&status.temperature==19.6&&!strcmp(status.state,"connected"));
+ int outdoor_calls=request_count;poll_outdoor_temperature();assert(request_count==outdoor_calls);
+ clock_s+=900;mock_response=NULL;mock_http_status=503;poll_outdoor_temperature();
+ assert(bosch_client_get_outdoor_temperature(&outside)&&outside==7.8);
+ clock_s+=901;outside=-999;assert(!bosch_client_get_outdoor_temperature(&outside)&&outside==-999);
+ mock_http_status=200;mock_response="{\"value\":0}";outdoor_next=0;poll_outdoor_temperature();
+ assert(bosch_client_get_outdoor_temperature(&outside)&&outside==0);
+ mock_response="{\"value\":1000}";outdoor_next=0;poll_outdoor_temperature();assert(!bosch_client_get_outdoor_temperature(&outside));
+ mock_response=NULL;mock_http_status=406;outdoor_next=0;poll_outdoor_temperature();
+ assert(status.outdoor_http_status==406&&!status.outdoor_available&&status.available);
+ mock_http_status=200;mock_response="{\"value\":-2.5}";outdoor_next=0;poll_outdoor_temperature();
+ assert(bosch_client_get_outdoor_temperature(&outside)&&outside==-2.5);
+ strcpy(device,"other-device");set_status("connecting",NULL);assert(!status.outdoor_available&&!outdoor_next);
+ strcpy(device,"101033665");set_status("connected",NULL);status.available=true;clock_s=original_clock;
+ assert(!bosch_client_get_outdoor_temperature(NULL));
+ puts("PASS optional outdoor GET, 15-minute cadence, zero/negative values, TTL, transient retention, unsupported/sentinel rejection, gateway invalidation and room independence");
  double room=-999;lock=1;assert(bosch_client_get_temperature(&room) && room==19.6);
  clock_s+=181;room=-999;assert(!bosch_client_get_temperature(&room) && room==-999);clock_s-=181;
  assert(!bosch_client_get_temperature(NULL));

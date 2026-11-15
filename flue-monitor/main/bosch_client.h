@@ -6,3 +6,6 @@ void bosch_client_start(httpd_handle_t server);
 
 // Snapshot only; never performs cloud I/O. False means absent, failed or stale.
 bool bosch_client_get_temperature(double *temperature_c);
+
+// Optional gateway outdoor sample, cached for at most 30 minutes.
+bool bosch_client_get_outdoor_temperature(double *temperature_c);

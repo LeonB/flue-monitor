@@ -34,6 +34,8 @@
 #define AUTH_MAX 2304
 #define CODE_SIZE 1024
 #define RESOURCE_URL_SIZE 256
+#define OUTDOOR_POLL_S 900
+#define OUTDOOR_MAX_AGE_S 1800
 
 static SemaphoreHandle_t lock;
 static QueueHandle_t jobs;
@@ -44,7 +46,10 @@ static struct {
     char zones[32][7];
     unsigned zone_count;
     bool linked, available, busy;
-    double temperature;
+    double temperature, outdoor_temperature;
+    bool outdoor_available;
+    int outdoor_http_status;
+    int64_t outdoor_sampled;
     int64_t sampled, auth_deadline;
     unsigned polls, refreshes;
 } status;
@@ -54,7 +59,7 @@ static char device[64], zone[7] = "zn1", verifier[65], oauth_state[65];
 static int64_t expiry, auth_deadline;
 static bool reauth;
 static char zones_device[64];
-static int64_t zones_next;
+static int64_t zones_next, outdoor_next;
 static int http_status;
 
 static int64_t now_s(void) { return esp_timer_get_time()/1000000; }
@@ -78,6 +83,10 @@ static void set_status(const char *state, const char *error) {
     snprintf(status.state,sizeof status.state,"%s",state);
     snprintf(status.error,sizeof status.error,"%s",error ? error : "");
     status.linked = refresh_token != NULL;
+    if (!refresh_token || strcmp(status.device,device)) {
+        status.outdoor_available=false; status.outdoor_sampled=0;
+        status.outdoor_http_status=0; outdoor_next=0;
+    }
     snprintf(status.device,sizeof status.device,"%s",device);
     snprintf(status.zone,sizeof status.zone,"%s",zone);
     if (strcmp(state,"connected")) status.available = false;
@@ -305,6 +314,29 @@ static void discover_zones(void) {
     }
     cJSON_Delete(o);
 }
+// Optional context: failed outdoor reads must not interrupt room polling.
+static void poll_outdoor_temperature(void) {
+    if (now_s()<outdoor_next) return;
+    outdoor_next=now_s()+OUTDOOR_POLL_S;
+    char *url=buffer_memory_alloc(RESOURCE_URL_SIZE);
+    if (!url) return;
+    snprintf(url,RESOURCE_URL_SIZE,API_ROOT "%s/resource/system/sensors/temperatures/outdoor_t1",device);
+    cJSON *o=request(url,NULL,true);
+    free(url);
+    cJSON *v=cJSON_GetObjectItemCaseSensitive(o,"value");
+    bool ok=cJSON_IsNumber(v) && bosch_temperature_valid(v->valuedouble);
+    xSemaphoreTake(lock,portMAX_DELAY);
+    status.outdoor_http_status=http_status;
+    if (ok) {
+        status.outdoor_temperature=v->valuedouble;
+        status.outdoor_sampled=now_s(); status.outdoor_available=true;
+    } else if (o || http_status==404 || http_status==406) {
+        status.outdoor_available=false;
+    }
+    // Transient failures retain the last successful sample only within its TTL.
+    xSemaphoreGive(lock);
+    cJSON_Delete(o);
+}
 static bool poll_temperature(void) {
     request_stage="Token refresh";
     if ((!access_token || now_s()>=expiry-60) && !refresh()) return false;
@@ -382,6 +414,16 @@ bool bosch_client_get_temperature(double *temperature_c) {
     xSemaphoreGive(lock);
     return valid;
 }
+bool bosch_client_get_outdoor_temperature(double *temperature_c) {
+    if (!lock || !temperature_c) return false;
+    xSemaphoreTake(lock,portMAX_DELAY);
+    bool valid=status.linked && status.outdoor_available &&
+        now_s()-status.outdoor_sampled<=OUTDOOR_MAX_AGE_S &&
+        bosch_temperature_valid(status.outdoor_temperature);
+    if (valid) *temperature_c=status.outdoor_temperature;
+    xSemaphoreGive(lock);
+    return valid;
+}
 static void task(void *arg) {
     stack_diagnostics_register(STACK_BOSCH, BOSCH_STACK_BYTES);
     load_credentials(); set_status(refresh_token ? "connecting" : "disconnected",NULL);
@@ -410,6 +452,7 @@ static void task(void *arg) {
                 }
                 next=now_s()+retry; retry=retry<450 ? retry*2 : 900;
             }
+            if (access_token && *device && !reauth) poll_outdoor_temperature();
         }
     }
 }
@@ -454,6 +497,14 @@ static esp_err_t handler(web_request_t *req) {
     cJSON_AddBoolToObject(o,"available",available);
     if (available) cJSON_AddNumberToObject(o,"temperature_c",status.temperature); else cJSON_AddNullToObject(o,"temperature_c");
     if (status.sampled) cJSON_AddNumberToObject(o,"age_s",now_s()-status.sampled); else cJSON_AddNullToObject(o,"age_s");
+    bool outdoor=status.linked && status.outdoor_available &&
+        now_s()-status.outdoor_sampled<=OUTDOOR_MAX_AGE_S;
+    cJSON_AddBoolToObject(o,"outdoor_available",outdoor);
+    if (outdoor) cJSON_AddNumberToObject(o,"outdoor_temperature_c",status.outdoor_temperature);
+    else cJSON_AddNullToObject(o,"outdoor_temperature_c");
+    if (status.outdoor_sampled) cJSON_AddNumberToObject(o,"outdoor_age_s",now_s()-status.outdoor_sampled);
+    else cJSON_AddNullToObject(o,"outdoor_age_s");
+    cJSON_AddNumberToObject(o,"outdoor_http_status",status.outdoor_http_status);
     cJSON_AddStringToObject(o,"device",status.device); cJSON_AddStringToObject(o,"zone",status.zone);
     cJSON *zones=cJSON_AddArrayToObject(o,"zones");
     for (unsigned i=0;zones && i<status.zone_count;i++) cJSON_AddItemToArray(zones,cJSON_CreateString(status.zones[i]));

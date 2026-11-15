@@ -430,7 +430,15 @@ No flashing, no reboot, no real device needed for CSS/layout/JS changes —
 only reach for a real flash-and-check once a change also touches the
 firmware side (a new REST field, a new settings key, etc.).
 
-## Bosch EasyControl room temperature
+## Bosch EasyControl temperatures
+
+The homescreen shows room temperature and **Outside** from the existing Bosch
+connection. Outdoor temperature is requested every 15 minutes from
+`/system/sensors/temperatures/outdoor_t1`; samples older than 30 minutes are
+unavailable. Missing or invalid values display a dash. Outdoor failures do not
+stop room-temperature polling. The same cached value is sent as optional
+`outdoor_temperature` with existing periodic and event-triggered Sheets rows;
+the extensible Apps Script adds that column without changing old columns.
 
 Settings → **Bosch room temperature** connects a CT200 through the POINTT
 cloud API. Click **Connect to Bosch**, open the generated SingleKey ID link,

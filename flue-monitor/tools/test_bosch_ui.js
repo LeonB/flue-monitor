@@ -13,6 +13,14 @@ vm.runInContext(fs.readFileSync('main/web_ui/dashboard.js', 'utf8'), context);
     return { ok: true, json: async () => ({ state: 'connected', linked: true, available: true, temperature_c: 19.6, busy: false }) };
   };
   await a.fetchBosch();assert.equal(a.boschTemperature,'19.6 °C');
+  assert(!a.boschHasOutdoorTemperature);
+  a.bosch.outdoor_available=true;a.bosch.outdoor_temperature_c=0;
+  assert(a.boschHasOutdoorTemperature);assert.equal(a.boschOutdoorTemperature,'0.0 °C');
+  a.bosch.outdoor_temperature_c=-3.2;assert.equal(a.boschOutdoorTemperature,'-3.2 °C');
+  a.bosch.available=false;assert(a.boschHasOutdoorTemperature); // independent of room validity
+  a.bosch.available=true;a.boschReceivedMs=Date.now()-20001;assert(!a.boschHasOutdoorTemperature);
+  a.boschReceivedMs=Date.now();a.bosch.outdoor_available=false;assert.equal(a.boschOutdoorTemperature,'Unavailable');
+
   a.bosch.zones=['zn10','zn2','zn2','bogus'];a.bosch.zone='zn1';a.boschZone='zn3';
   assert.equal(a.boschZoneOptions.map(o=>o.id).join(','),'zn1,zn2,zn3,zn10');
   a.bosch.zones=null;assert.ok(a.boschZoneOptions.some(o=>o.id==='zn3'));
