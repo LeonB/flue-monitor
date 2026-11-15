@@ -26,7 +26,7 @@ async function saveCase(confirmation) {
   assert.match(relayStatus.cloudflareStatusDetail,/availability is not checked/);
   await saveCase(true);
   await saveCase(false);
-  for (const key of ['log_heartbeat_min', 'thermocouple_deadband_c', 'google_sheets_webhook_url', 'google_sheets_secret', 'cloudflare_enabled', 'cloudflare_hostname', 'cloudflare_custom_domain', 'cloudflare_relay']) {
+  for (const key of ['burn_end_temperature_c', 'log_heartbeat_min', 'thermocouple_deadband_c', 'google_sheets_webhook_url', 'google_sheets_secret', 'cloudflare_enabled', 'cloudflare_hostname', 'cloudflare_custom_domain', 'cloudflare_relay']) {
     const logging = context.app();
     logging.settings = { [key]: 'before', maximum_brightness: 100 };
     logging.draft = { [key]: 'after', maximum_brightness: 100 };

@@ -1,5 +1,38 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-16 burn-session lighting and cooling threshold
+
+Owner approved sustained-rise starts and 30min below a configurable end threshold
+without renewed sustained warming. burnHistoryRange now uses independent end60C,
+validated finite/nonnegative and below the cold-zone start limit. Starts also on
+>=2C/min across>=2 consecutive intervals spanning>=4min; gaps>8min reset the rise
+candidate. Uses temperature differences rather than one regression rate value.
+Glowing/coaling observations remain manual; no colour/LED/sensor changes.
+Dashboard Tuning has Burn sessions / Session ends below. Field is monitor-only,
+no display acknowledgement. settings_t append4B (4496B), NVSsettings_v4 migrates
+v3 and existing v2/v1 layouts while retaining old keys for rollback. Older API
+clients omit the new field without resetting it.
+
+Owner supplied read-only Sheet1FBclI7nmsVf1YWoD5LyQ6gISbO4SOWURTZWdCJyEavY;
+authenticated browser CSV export3036rows through16Nov00:05local. Source unchanged.
+Replay:15Nov12:21 old range09:21..now, new12:00..now;16Nov00:05 old22:31..now,
+new16:26..now (pre-start padding included). This supports earlier lighting and
+merging warm refills; not ground-truth classification of every session. One
+stored rate121C/min motivates rejecting isolated rate values. Actual15Novlighting
+temperatures embedded as a small regression fixture, not the whole private Sheet.
+Host graph, settings-sync, ASan/UBSan settings migration/REST, asset versions and
+history snapshot tests pass. Firmware IDF6.0.3 build1517872B,18128B OTA free;
+SHA256f467d5b7280d66b102132902456aabe73d4f4c3039ac4025a216cbbad7457c93.
+Frozen artifacts .cache/burn-sessions/f467d5b7280d66b1/. OTA succeeded with backup/readback
+.cache/ota-history/20261115T230843716554Z/:360samples/15events preserved.
+Production Chrome verified Session ends below60C, existing cold125/hot200,
+Bosch21.6/9C, four tunnel connections and live graph15Nov21:21..16Nov00:10.
+Important: Sheet logging is sparser than the four-minute device history. Device
+history shows<60C from20:45 through21:36; thus this legitimately splits the evening
+at21:36 (15min padding21:21), unlike replay of the sparser Sheet. Never claim Sheet
+sampling is ground truth or that the live graph must match its16:26 replay.
+Owner requested committing this change; nothing pushed. No watchdog monitoring restart or USB open.
+
 ## 2026-11-15 Bosch outdoor temperature DEPLOYED
 
 Bosch outdoor_t1 is fetched read-only by the existing Bosch worker every900s,

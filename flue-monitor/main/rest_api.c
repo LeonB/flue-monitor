@@ -494,6 +494,7 @@ static void settings_to_json(const settings_t *s, cJSON *root) {
   cJSON_AddBoolToObject(root, "cloudflare_token_set", *s->cloudflare.token != 0);
   cJSON_AddNumberToObject(root, "settings_revision", ws_server_settings_revision(false));
   cJSON_AddNumberToObject(root, "log_heartbeat_min", s->log_heartbeat_min);
+  cJSON_AddNumberToObject(root, "burn_end_temperature_c", round_to(s->burn_end_temperature_c, 0.1));
   cJSON_AddNumberToObject(root, "zone_cold_max_c", round_to(s->zone_cold_max_c, 0.1));
   cJSON_AddNumberToObject(root, "zone_optimal_max_c", round_to(s->zone_optimal_max_c, 0.1));
   cJSON_AddNumberToObject(root, "fast_rise_c_per_min", round_to(s->fast_rise_c_per_min, 0.1));
@@ -606,6 +607,15 @@ static esp_err_t settings_post_handler(web_request_t *req) {
 
   item = cJSON_GetObjectItem(root, "zone_cold_max_c");
   s->zone_cold_max_c = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;
+
+  // Older clients retain the saved session threshold when omitting this field.
+  item = cJSON_GetObjectItem(root, "burn_end_temperature_c");
+  if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble))) {
+    cJSON_Delete(root);
+    free(snapshots);
+    return web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid session end temperature");
+  }
+  s->burn_end_temperature_c = item ? (float)item->valuedouble : current->burn_end_temperature_c;
 
   item = cJSON_GetObjectItem(root, "zone_optimal_max_c");
   s->zone_optimal_max_c = cJSON_IsNumber(item) ? (float) item->valuedouble : 0.0f;

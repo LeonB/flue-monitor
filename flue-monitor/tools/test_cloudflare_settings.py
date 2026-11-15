@@ -48,6 +48,7 @@ static unsigned char stored[16384];
 static size_t stored_len;
 static unsigned char stored_v2[16384];static size_t stored_v2_len;
 static unsigned char stored_v3[16384];static size_t stored_v3_len;
+static unsigned char stored_v4[16384];static size_t stored_v4_len;
 static unsigned writes, wakes;
 static bool fail_body_alloc;
 static int alloc_calls, fail_alloc_at;
@@ -57,12 +58,12 @@ static void xSemaphoreTake(int a,int b) {(void)a;(void)b;}
 static void xSemaphoreGive(int a) {(void)a;}
 static int nvs_open(const char *a,int b,int *c) {(void)a;(void)b;*c=1;return ESP_OK;}
 static int nvs_get_blob(int a,const char *key,void *out,size_t *n) {
- (void)a;unsigned char *data=!strcmp(key,"settings_v3")?stored_v3:!strcmp(key,"settings_v2")?stored_v2:stored;
- size_t len=!strcmp(key,"settings_v3")?stored_v3_len:!strcmp(key,"settings_v2")?stored_v2_len:stored_len;
+ (void)a;unsigned char *data=!strcmp(key,"settings_v4")?stored_v4:!strcmp(key,"settings_v3")?stored_v3:!strcmp(key,"settings_v2")?stored_v2:stored;
+ size_t len=!strcmp(key,"settings_v4")?stored_v4_len:!strcmp(key,"settings_v3")?stored_v3_len:!strcmp(key,"settings_v2")?stored_v2_len:stored_len;
  if(!len)return ESP_FAIL;if(!out){*n=len;return ESP_OK;}if(*n<len)return ESP_FAIL;memcpy(out,data,len);*n=len;return ESP_OK;
 }
 static int nvs_set_blob(int a,const char *key,const void *out,size_t n) {
- (void)a;assert(!strcmp(key,"settings_v3")&&n<=sizeof stored_v3);memcpy(stored_v3,out,n);stored_v3_len=n;writes++;return ESP_OK;
+ (void)a;assert(!strcmp(key,"settings_v4")&&n<=sizeof stored_v4);memcpy(stored_v4,out,n);stored_v4_len=n;writes++;return ESP_OK;
 }
 static int nvs_commit(int a) {(void)a;return ESP_OK;}
 static void nvs_close(int a) {(void)a;}
@@ -98,11 +99,11 @@ int main(void) {
  settings_t legacy;set_defaults(&legacy);legacy.log_heartbeat_min=87;
  strcpy(legacy.google_sheets_secret,"preserve-sheets");strcpy(legacy.zone_cold_color,"#fab100");
  const size_t prefix=260,old_cf=776,old_size=5008;
- assert(offsetof(settings_t,cloudflare)==prefix&&sizeof(settings_t)==4492);
+ assert(offsetof(settings_t,cloudflare)==prefix&&sizeof(settings_t)==4496);
  const size_t sizes[]={old_cf,old_cf+16,old_cf+20,prefix,prefix+388,
    offsetof(settings_t,zone_cold_color),offsetof(settings_t,breathing_exponent),offsetof(settings_t,maximum_brightness)};
  for(unsigned key=0;key<2;key++)for(size_t i=0;i<sizeof sizes/sizeof sizes[0];i++) {
-   stored_v3_len=stored_v2_len=stored_len=0;
+   stored_v4_len=stored_v3_len=stored_v2_len=stored_len=0;
    unsigned char*dest=key?stored_v2:stored;size_t*len=key?&stored_v2_len:&stored_len;
    memset(dest,0,16384);memcpy(dest,&legacy,sizes[i]<prefix?sizes[i]:prefix);*len=sizes[i];
    settings_init();settings_t migrated;settings_get(&migrated);
@@ -117,11 +118,19 @@ int main(void) {
  memset(stored_v2+prefix,0xa5,516);memcpy(stored_v2+old_cf,&c.cloudflare,sizeof c.cloudflare);
  stored_v2_len=old_size;stored_v3_len=0;settings_init();settings_t restored;settings_get(&restored);
  assert(!memcmp(&c,&restored,sizeof c));
+ // Deployed v3 migrates without losing its Cloudflare token or settings.
+ memcpy(stored_v3,&c,offsetof(settings_t,burn_end_temperature_c));
+ stored_v3_len=offsetof(settings_t,burn_end_temperature_c);settings_init();settings_get(&restored);
+ assert(!memcmp(&c,&restored,sizeof c)&&restored.burn_end_temperature_c==60);
  unsigned char previous[5008];memcpy(previous,stored_v2,old_size);
- assert(settings_set(&c)==ESP_OK&&stored_v3_len==sizeof c&&!memcmp(previous,stored_v2,old_size));
+ assert(settings_set(&c)==ESP_OK&&stored_v4_len==sizeof c&&!memcmp(previous,stored_v2,old_size));
  settings_init();settings_get(&restored);assert(!memcmp(&c,&restored,sizeof c));
- // Unsupported/truncated v3 must not silently resurrect an older valid v2.
- stored_v3_len--;settings_init();settings_get(&restored);assert(restored.log_heartbeat_min==DEFAULT_LOG_HEARTBEAT_MIN&&!restored.cloudflare.enabled);
+ // Session threshold validation rejects invalid values without persisting.
+ settings_t bad_end=c;bad_end.burn_end_temperature_c=NAN;assert(settings_set(&bad_end)==ESP_ERR_INVALID_ARG);
+ bad_end.burn_end_temperature_c=-1;assert(settings_set(&bad_end)==ESP_ERR_INVALID_ARG);
+ bad_end.burn_end_temperature_c=c.zone_cold_max_c;assert(settings_set(&bad_end)==ESP_ERR_INVALID_ARG);
+ // Unsupported/truncated v4 must not silently resurrect an older valid v2.
+ stored_v4_len--;settings_init();settings_get(&restored);assert(restored.log_heartbeat_min==DEFAULT_LOG_HEARTBEAT_MIN&&!restored.cloudflare.enabled);
  assert(settings_set(&c)==ESP_OK);settings_init();
  cloudflare_settings_t cf;settings_get_cloudflare(&cf);assert(!memcmp(&cf,&c.cloudflare,sizeof cf));
  for(unsigned i=0;i<=5;i++){cloudflare_settings_t x=cf;x.connections=i;assert(valid_cloudflare(&x)==(i>=1 && i<=4));}
@@ -135,6 +144,11 @@ int main(void) {
    cJSON *j=cJSON_Parse(request.response);assert(j && cJSON_IsTrue(cJSON_GetObjectItem(j,"cloudflare_token_set")));
    assert(!cJSON_GetObjectItem(j,"cloudflare_token"));
    if(remote)assert(!cJSON_GetObjectItem(j,"google_sheets_secret"));
+   assert(cJSON_GetObjectItem(j,"burn_end_temperature_c")->valuedouble==60);
+   cJSON_ReplaceItemInObject(j,"burn_end_temperature_c",cJSON_CreateNumber(55));write_api(j,remote,200);
+   cJSON_DeleteItemFromObject(j,"burn_end_temperature_c");write_api(j,remote,200);
+   settings_get(&restored);assert(restored.burn_end_temperature_c==55);
+   cJSON_AddNumberToObject(j,"burn_end_temperature_c",60);
    cJSON_AddStringToObject(j,"cloudflare_token","");write_api(j,remote,200);
    cJSON_DeleteItemFromObject(j,"cloudflare_token");write_api(j,remote,200);cJSON_Delete(j);
    settings_get(&restored);assert(!strcmp(c.cloudflare.token,restored.cloudflare.token));
@@ -151,7 +165,7 @@ int main(void) {
  httpd_req_t device={0};settings_get_handler(&device);assert(device.status==200 && !strstr(device.response,"preserve-sheets"));
  write_api(j,false,401);write_api(j,true,401);configured=false;write_api(j,true,401);write_api(j,false,200);cJSON_Delete(j);
  fail_body_alloc=true;httpd_req_t oom={.content_len=2,.input="{}"};before=writes;settings_post_handler(&oom);assert(oom.status==500 && writes==before && !oom.received);fail_body_alloc=false;
- puts("PASS: v1/v2 migration, v3 roundtrip/corruption, preserved old blobs, unchanged credentials, Cloudflare persistence, 1–4 validation, host/token injection rejection, LAN/public redaction, blank/omitted token preservation, reconfiguration, auth and allocation failure");
+ puts("PASS: v1/v2/v3 migration, v4 roundtrip/corruption, session threshold validation and older API compatibility, preserved old blobs, unchanged credentials, Cloudflare persistence, 1–4 validation, host/token injection rejection, LAN/public redaction, blank/omitted token preservation, reconfiguration, auth and allocation failure");
  return 0;
 }
 '''

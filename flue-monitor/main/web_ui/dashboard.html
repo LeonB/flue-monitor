@@ -402,6 +402,20 @@ window.flueStartupDone=async()=>{await window.flueFontsReady;clearTimeout(window
       </div>
 
       <div class="field-group">
+        <h6>Burn sessions</h6>
+        <div class="field-list">
+          <div class="field-row">
+            <span class="field-label">Session ends below<small class="field-help">A session ends after 30 minutes below this temperature without sustained warming. Must be below the cold-zone limit.</small></span>
+            <div class="stepper" :class="{ changed: changed('burn_end_temperature_c') }">
+              <button @click="stepBounded('burn_end_temperature_c', -5, 0, Math.max(0, draft.zone_cold_max_c - 1))">−</button>
+              <span class="stepper-value" x-text="Math.round(draft.burn_end_temperature_c ?? 60) + ' °C'"></span>
+              <button @click="stepBounded('burn_end_temperature_c', 5, 0, Math.max(0, draft.zone_cold_max_c - 1))">+</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="field-group">
         <h6>The zone</h6>
         <div class="field-list">
           <div class="zone-theme" @click.outside="themeMenuOpen = false" @keydown.escape.stop="themeMenuOpen = false; $refs.themeButton.focus()">

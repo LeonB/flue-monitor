@@ -407,6 +407,17 @@ Both devices need this firmware update for the ring to use the saved palette.
 curl http://flue-monitor.local/api/history
 ```
 
+The graph automatically frames the latest burn session, including lighting and
+cooling. A session starts at the cold-zone limit or after at least three
+consecutive readings show a rise of at least 2 °C/min over at least four minutes.
+Gaps over eight minutes do not establish sustained warming. A session ends after
+30 minutes below `burn_end_temperature_c` (default 60 °C), with sustained warming
+restarting that timer. This end threshold is editable under **Burn sessions** and
+must be below the cold-zone limit. It changes graph framing only. The graph follows
+through now; three hours after the observed session end it returns to the last
+three hours. Manual zoom remains available.
+
+
 Backs the 24h graph: `{"now_s": <uptime>, "samples": [[age_s, temp_c, rate,
 zone_code], ...], "events": [[age_s, slug], ...]}`, oldest first,
 downsampled to ~4min resolution (360 points for 24h — a phone-width graph

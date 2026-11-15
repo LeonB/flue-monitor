@@ -1,23 +1,36 @@
-// Start at the recent burn and keep its cooling tail visible through now.
-function burnHistoryRange(samples, cold, now) {
+// Sessions include lighting and cooling, independently of the glow's cold zone.
+function burnHistoryRange(samples, cold, now, endTemperature = 60) {
   const recent = 3 * 3600, pause = 30 * 60, padding = 15 * 60;
-  let latest = null, current = null, coldSince = null;
+  // Four minutes matches the normal graph sampling interval. Do not infer a
+  // sustained rise across a long recording gap or a compressed cold plateau.
+  const riseDuration = 4 * 60, maxRiseGap = 8 * 60, risePerMinute = 2;
+  let latest = null, current = null, coldSince = null, risingSince = null;
+  let previous = null, risingIntervals = 0;
   for (const [time, temperature] of samples) {
-    if (current && coldSince !== null && time - coldSince >= pause) {
-      latest = { start: current.start, end: coldSince };
+    const dt = previous ? time - previous[0] : 0;
+    const rising = dt > 0 && dt <= maxRiseGap &&
+      (temperature - previous[1]) * 60 / dt >= risePerMinute;
+    risingSince = rising ? (risingSince ?? previous[0]) : null;
+    risingIntervals = rising ? risingIntervals + 1 : 0;
+    const warming = risingIntervals >= 2 && time - risingSince >= riseDuration;
+    if (current && coldSince !== null && !warming && time - coldSince >= pause) {
+      latest = { start: current.start, end: coldSince + pause };
       current = null;
     }
-    if (temperature >= cold) {
-      if (!current) current = { start: time };
+    if (temperature >= cold || warming) {
+      if (!current) current = { start: warming ? risingSince : time };
       coldSince = null;
-    } else if (current && coldSince === null) {
-      coldSince = time;
     }
+    if (current) {
+      if (temperature >= endTemperature) coldSince = null;
+      else if (coldSince === null) coldSince = time;
+    }
+    previous = [time, temperature];
   }
   if (current) {
     const last = samples[samples.length - 1][0];
-    latest = { start: current.start, end: coldSince ?? last };
-    if (now - (coldSince ?? last) < pause) latest.end = now;
+    // Only observed cold time can close a session; a missing feed cannot.
+    latest = { start: current.start, end: last };
   }
   if (!latest || now - latest.end > recent) return { min: now - recent, max: now };
   const min = Math.max(samples[0][0], latest.start - padding);
@@ -61,7 +74,7 @@ function burnGraph() {
       const values = samples.map(s => s[1]);
       const low = Math.min(...values, cold), high = Math.max(...values, hot);
       bounds = { low: low - Math.max(10, (high-low)*.1), high: high + Math.max(30, (high-low)*.15), cold, hot };
-      defaultRange = burnHistoryRange(samples, cold, Date.now() / 1000);
+      defaultRange = burnHistoryRange(samples, cold, Date.now() / 1000, settings.burn_end_temperature_c ?? 60);
       const data = [samples.map(s => s[0]), values];
       if (plot) {
         plot.setData(data, false);

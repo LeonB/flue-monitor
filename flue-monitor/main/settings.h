@@ -48,6 +48,7 @@ typedef struct {
   uint32_t maximum_brightness; // 0..255, must be >= minimum
   uint32_t minimum_brightness; // 0..255, LED channel floor
   cloudflare_settings_t cloudflare;
+  float burn_end_temperature_c; // Graph sessions only; append for NVS migration.
 } settings_t;
 
 // Loads settings from NVS, seeding config.h's compile-time defaults if NVS

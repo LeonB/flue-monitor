@@ -61,6 +61,33 @@ assert.deepEqual(range([[now-30000,20], [now-25000,130], [now-24000,20]]),
   { min: now-10800, max: now });
 assert.deepEqual(range([[now-30000,20], [now-25000,130]]),
   { min: now-10800, max: now });
+// A low fire starts on sustained warming without reaching the glow threshold.
+assert.deepEqual(range([[now-20000,20],[now-8000,30],[now-7760,40],[now-7520,50],[now,65]]),
+  {min:now-8900,max:now});
+// Neither slow room warming, a single spike nor a long measurement gap starts it.
+for (const points of [
+  [[now-20000,20],[now-8000,30],[now-7760,34],[now,36]],
+  [[now-20000,20],[now-8000,30],[now-7760,80],[now-7520,30],[now,30]],
+  [[now-20000,20],[now-8000,30],[now-6000,80],[now,80]]
+]) assert.deepEqual(range(points),{min:now-10800,max:now});
+// Hours of coaling above the separate end threshold stay in the same session.
+assert.deepEqual(range([[now-24000,20],[now-22000,140],[now-20000,80],
+  [now-4000,65],[now-3500,140],[now,70]]), {min:now-22900,max:now});
+// End recency begins after the full 30-minute cold period, not at its start.
+assert.deepEqual(range([[now-24000,20],[now-20000,140],[now-12000,50],
+  [now-10000,45],[now,30]]), {min:now-20900,max:now});
+// Brief warming cannot defer closure, but sustained warming restarts the timer.
+assert.deepEqual(range([[now-24000,20],[now-20000,140],[now-14000,20],
+  [now-12500,30],[now-12260,40],[now-12020,50],[now-10000,45],[now,30]]),
+  {min:now-20900,max:now});
+assert.deepEqual(JSON.parse(JSON.stringify(context.burnHistoryRange(
+  [[now-24000,20],[now-22000,140],[now-20000,75],[now,70]],125,now,80))),
+  {min:now-10800,max:now});
+// Actual Sheet temperatures, 15 November: lighting was already clear below125C.
+const lighting = [[0,35.6],[96,46.6],[191,63.2],[229,73.6],[296,88.4]];
+assert.deepEqual(range([[now-20000,24], ...lighting.map(([t,c])=>[now-8000+t,c]),[now,70]]),
+  {min:now-8900,max:now});
+
 function graph() {
   const g = context.burnGraph();
   g.$refs = { plot: { clientWidth: 600, isConnected: true }, tooltip: {} };
@@ -119,4 +146,4 @@ now += 60;
 cooling.update(coolingHistory, {thermocouple_ok:true,thermocouple_c:55}, {zone_cold_max_c:125}, true, [], coolingReceived*1000);
 flushCommits();
 assert.equal(cooled.scales.x.max, now, 'cooling tail must keep following current time');
-console.log('PASS burn detection, cold-gap merging, recent cutoff, threshold, padding, stale history, deferred uPlot commits, live following, manual zoom, reset and no restored zoom');
+console.log('PASS sustained low-temperature lighting, spike/gap rejection, configurable cooling threshold, cold timer restart, Sheet lighting fixture, burn detection, cold-gap merging, recent cutoff, threshold, padding, stale history, deferred uPlot commits, live following, manual zoom, reset and no restored zoom');

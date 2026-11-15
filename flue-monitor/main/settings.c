@@ -18,7 +18,7 @@ static const char *TAG = "settings";
 
 #define NVS_NAMESPACE "settings"
 #define NVS_KEY_LEGACY "settings_v1"
-#define NVS_KEY_BLOB  "settings_v3"  // whole settings_t as one blob -- see settings_set()'s own doc comment for why
+#define NVS_KEY_BLOB  "settings_v4"  // whole settings_t as one blob -- see settings_set()'s own doc comment for why
 
 static settings_t *s_settings;
 static SemaphoreHandle_t s_mutex;
@@ -44,6 +44,7 @@ static void set_defaults(settings_t *s) {
   s->minimum_brightness = DEFAULT_MINIMUM_BRIGHTNESS;
   s->maximum_brightness = DEFAULT_MAXIMUM_BRIGHTNESS;
   s->cloudflare.connections = 1;
+  s->burn_end_temperature_c = 60.0f;
 }
 
 static bool valid_color(const char color[8]) {
@@ -87,6 +88,8 @@ static bool valid_cloudflare(const cloudflare_settings_t *c) {
 
 static bool validate(const settings_t *s) {
   if (!valid_cloudflare(&s->cloudflare)) return false;
+  if (!isfinite(s->burn_end_temperature_c) || s->burn_end_temperature_c < 0.0f ||
+      !isfinite(s->zone_cold_max_c) || s->burn_end_temperature_c >= s->zone_cold_max_c) return false;
   if (s->maximum_brightness > 255 || s->minimum_brightness > s->maximum_brightness) return false;
   if (!isfinite(s->breathing_exponent) || s->breathing_exponent < 0.3f || s->breathing_exponent > 3.0f) return false;
   if (!valid_color(s->zone_cold_color) || !valid_color(s->zone_optimal_color) || !valid_color(s->zone_hot_color)) return false;
@@ -127,13 +130,13 @@ void settings_init(void) {
     // so rollback images retain their own layout and credentials.
     const size_t prefix = offsetof(settings_t, cloudflare);
     const size_t old_cloudflare = prefix + 516;
-    const char *keys[] = {NVS_KEY_BLOB, "settings_v2", NVS_KEY_LEGACY};
+    const char *keys[] = {NVS_KEY_BLOB, "settings_v3", "settings_v2", NVS_KEY_LEGACY};
     for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
       size_t len = 0;
       if (nvs_get_blob(handle, keys[i], NULL, &len) != ESP_OK) continue;
-      bool current = i == 0;
+      bool current = i < 2;
       bool full_old = len == old_cloudflare + sizeof(cloudflare_settings_t);
-      bool supported = current ? len == sizeof(settings_t) :
+      bool supported = current ? len == (i == 0 ? sizeof(settings_t) : offsetof(settings_t, burn_end_temperature_c)) :
           full_old || len == old_cloudflare || len == old_cloudflare + 16 ||
           len == old_cloudflare + 20 || len == prefix + 388 || len == prefix ||
           len == offsetof(settings_t, zone_cold_color) ||
@@ -150,6 +153,8 @@ void settings_init(void) {
             if (full_old) memcpy(&loaded->cloudflare, (char *)stored + old_cloudflare,
                                  sizeof loaded->cloudflare);
           }
+          // Seed the new field below even an unusually low legacy cold limit.
+          if (i > 0) loaded->burn_end_temperature_c = fminf(60.0f, fmaxf(0.0f, loaded->zone_cold_max_c - 1.0f));
           if (!validate(loaded)) set_defaults(loaded);
         }
         memset(stored, 0, len);
