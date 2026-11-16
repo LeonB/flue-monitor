@@ -41,6 +41,7 @@
 #include "sensors.h"
 #include "settings.h"
 #include "sheets_logger.h"
+#include "refill_notify.h"
 #include "status_led.h"
 #include "wifi_setup.h"
 #include "ws_server.h"
@@ -71,6 +72,7 @@ static void sensor_log_task(void *arg) {
     sensor_reading_t reading;
     FLUE_TRACE(SENSOR_BEGIN,0);
     sensors_read(&reading);
+    refill_notify_sample(&reading);
     FLUE_TRACE(SENSOR_END,reading.thermocouple_ok);
 
     if (reading.thermocouple_ok) {
@@ -235,6 +237,7 @@ void app_main(void) {
     ota_server_register(server, OTA_SECRET);
     ws_server_register(server);
     bosch_client_start(server);
+    refill_notify_register(server);
 #endif
     sheets_logger_init();
     flight_recorder_test_start();

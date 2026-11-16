@@ -1,5 +1,66 @@
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
+## 2026-11-16 ntfy refill reminders and quiet hours
+
+Owner confirmed receiving the ntfy test on the phone. Settings section renamed
+Notifications at owner request; refill-specific descriptions remain.
+Label-only image1526208B,9792B free,SHA256
+2b5a36f08be98c7fbfde1507940d1f03e1be0f24f00e33a2b667f60279b18d73
+in.cache/refill-notify/2b5a36f08be98c7f/ deployed successfully. Backup/readback
+.cache/ota-history/20261116T002422379167Z/ preserved
+360samples/17events.
+
+Owner approved live refill reminders through ntfy, a new random topic, default
+quiet23:00..07:00 with adjustable times and a temporary Allow tonight override.
+Detector uses actual10s sensor samples and the existing150s regression rate:
+>=2C/min for4min arms;5min falling,>=20C belowpeak and<=threshold(default80C)
+creates one candidate. Fresh sustained warming rearms; manual added_wood,
+cold_start or stove_off cancels. Invalid samples/gaps>30s reset. No boot restore
+of detector/override. Quiet candidates consumed, no morning catch-up.
+
+Small state is locked; HTTP/TLS uses the existing Sheets worker with unchanged
+stack reservation and no extra task. One pending job,2min expiry; delivery
+rechecks settings, quiet time, sensor validity and renewed warming. HTTPS POST
+with CA validation,10s timeout, no redirects; optional bearer token, public
+hostname click link. One attempt only: ambiguous network timeouts cannot cause
+retry duplicates. Status distinguishes ntfy acceptance from phone display.
+Explicit authenticated+CSRF test bypasses quiet/off; no fake burn event logged.
+Topic URL and token never returned by settings API; blank retains saved values.
+Public unguessable ntfy topic is not an authenticated/reserved topic.
+
+Settings_t4836B; append refill_settings_t340B;settings_v5 migrates v4 and previous
+layouts without losing credentials or the burn-end threshold. Four routes:
+GET/api/refill/status,POST/api/refill/test,/allow-tonight,/quiet. Route capacities
+increased by4. UI has destination/token, enable/threshold, quiet times, test,
+override and status; existing monitor-only save path/credential wiping reused.
+Full libc TZ parser made image2800B too large. Compact EU2000/84 clock helper
+uses gmtime_r and bounded minute scan for next quiet end; no globalTZ changes.
+Compared to libc EU TZ across2026..2035, plus missing/repeated DST hours and
+spring/fall overrides. Current EU rule must be updated if legislation changes.
+
+ASan/UBSan actual detector/transport/API tests pass; quiet/no catchup, DST,
+manual/stale/config cancellation, allocation/header/network failures, no retries,
+auth/CSRF/redaction. Existing settings-migration/REST, Sheets-memory, directHTTP2
+(two variants), graph, events, asset versions, settings-sync and new UI tests pass.
+IDF6.0.3 final image1526176B;9824B OTA free. SHA256
+fd199e0fdc0452064a0f11e6c3d7018b6b3e3c9ec1a59bf09d1301f91946fce4.
+Frozen .cache/refill-notify/fd199e0fdc045206/. Explicit tunnel allowlist now
+includes the four new method/path pairs, with regression coverage keeping
+arbitrary/OTA/device routes blocked. First image lacked these entries; caught
+by live public endpoint check, fixed before final ntfy test. First OTA backup
+.cache/ota-history/20261116T000601200606Z/ preserved360samples/17events.
+Random topic configured through authenticated Chrome UI, not committed or exposed
+by settings readback. Final OTA .cache/ota-history/20261116T001137037136Z/ also
+verified360samples/17events. Configuration survived that reboot; Chrome remained
+signed in, four tunnel connections and live sensor/Bosch readings healthy.
+Public endpoint unauthenticated401; authenticated test POST succeeded. Explicit
+Send test during quiet hours resulted in result=sent,http_status=200; quiet=true,
+override_until=0. This confirms ntfy acceptance, not phone presentation. Owner
+subscribed to generated topic and explicitly confirmed the test text on phone. Screenshot
+of active80C/23..07 settings in current task workspace refill-analysis/notifications-live.jpg.
+No fake burn event, setting changes to stove/display, or extra Sheets log rows.
+Owner requested committing this change; nothing pushed. No USB open, watchdog tests or recorder restart.
+
 ## 2026-11-16 persistent remembered dashboard sessions
 
 Owner approved bounded persistent sessions instead of JWT: remembered sessions

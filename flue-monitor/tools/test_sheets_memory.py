@@ -134,7 +134,7 @@ int main(void) {
 with tempfile.TemporaryDirectory() as directory:
     source = Path(directory) / 'sheets_test.c'
     binary = Path(directory) / 'sheets_test'
-    source.write_text(preamble + headers + shims + sheets + classify + tests)
+    source.write_text(preamble + headers + "\nstatic void refill_notify_send_pending(const settings_t *s) {(void)s;}\n" + shims + sheets + classify + tests)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
                     str(source), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True, timeout=20)

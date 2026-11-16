@@ -414,6 +414,31 @@ Both devices need this firmware update for the ring to use the saved palette.
 curl http://flue-monitor.local/api/history
 ```
 
+Refill reminders can be enabled under **Tuning → Notifications**. Save an
+HTTPS ntfy topic URL, subscribe to it in the ntfy phone app, then use **Send test**.
+An optional access token supports protected topics; blank URL/token fields retain
+the saved destination. These credentials are never returned by the settings API.
+Public ntfy topics use an unpredictable topic name as their subscription secret;
+anyone who knows that topic can read/publish there.
+
+The live detector arms after at least 4 minutes rising at 2 °C/min or faster. It
+reminds once after at least 5 minutes falling, 20 °C below the observed peak and
+at/below the configured threshold (default 80 °C). Fresh warming rearms it;
+manual added_wood/cold_start/stove_off cancels pending reminders. Invalid sensor
+samples and gaps over 30 seconds reset detection. It starts fresh after reboot.
+Default quiet hours are23:00–07:00 Netherlands time, with the current EU summer-
+time rule handled automatically. **Allow tonight** lasts until the next quiet
+end; it resets on reboot. Skipped reminders are never queued for morning.
+**Send test** explicitly bypasses quiet hours and works while reminders are off.
+
+Delivery reuses the Sheets network worker, so sensor/HTTP tasks never wait on
+ntfy and no extra TLS task is created. Pending candidates expire after2minutes;
+delivery rechecks quiet hours, current temperature and sensor validity. HTTPS
+uses certificate validation and no redirects. One transport attempt avoids
+repeating an already-delivered message after an ambiguous timeout; delivery
+failures appear in status. ntfy acceptance does not prove the phone displayed it.
+This is a refill reminder, not a safety alarm. Existing Sheets logging is unchanged.
+
 The graph automatically frames the latest burn session, including lighting and
 cooling. A session starts at the cold-zone limit or after at least three
 consecutive readings show a rise of at least 2 °C/min over at least four minutes.

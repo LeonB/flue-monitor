@@ -86,6 +86,14 @@ int main(void){
  (void)TAG;
  assert(cloudflare_route_allowed("GET","/dashboard.js?v=valid",false));
  assert(cloudflare_route_allowed("POST","/api/settings",false));
+ assert(cloudflare_route_allowed("GET","/api/refill/status",false));
+ const char *refill_actions[]={"/api/refill/test","/api/refill/allow-tonight","/api/refill/quiet"};
+ for(size_t i=0;i<sizeof refill_actions/sizeof refill_actions[0];i++) {
+  assert(cloudflare_route_allowed("POST",refill_actions[i],false));
+  assert(!cloudflare_route_allowed("GET",refill_actions[i],false));
+ }
+ assert(!cloudflare_route_allowed("POST","/api/refill/status",false));
+ assert(!cloudflare_route_allowed("POST","/api/refill/arbitrary",false));
  const char *blocked[]={"/ota","/ws","/api/wifi","/api/tunnel/settings","/api/cloudflare/status/..","/api/settings/../wifi","/%2fota"};
  for(size_t i=0;i<sizeof blocked/sizeof blocked[0];i++)assert(!cloudflare_route_allowed("GET",blocked[i],false));
  assert(!cloudflare_route_allowed("DELETE","/api/settings",false));assert(!cloudflare_route_allowed("GET","/",true));

@@ -18,7 +18,7 @@ static const char *TAG = "settings";
 
 #define NVS_NAMESPACE "settings"
 #define NVS_KEY_LEGACY "settings_v1"
-#define NVS_KEY_BLOB  "settings_v4"  // whole settings_t as one blob -- see settings_set()'s own doc comment for why
+#define NVS_KEY_BLOB  "settings_v5"  // whole settings_t as one blob -- see settings_set()'s own doc comment for why
 
 static settings_t *s_settings;
 static SemaphoreHandle_t s_mutex;
@@ -45,6 +45,10 @@ static void set_defaults(settings_t *s) {
   s->maximum_brightness = DEFAULT_MAXIMUM_BRIGHTNESS;
   s->cloudflare.connections = 1;
   s->burn_end_temperature_c = 60.0f;
+  s->refill.threshold_c = 80.0f;
+  s->refill.quiet_enabled = 1;
+  s->refill.quiet_start_min = 23 * 60;
+  s->refill.quiet_end_min = 7 * 60;
 }
 
 static bool valid_color(const char color[8]) {
@@ -86,8 +90,29 @@ static bool valid_cloudflare(const cloudflare_settings_t *c) {
   return !c->enabled || (*c->hostname && n >= 16);
 }
 
+static bool valid_refill(const refill_settings_t *r) {
+  if (r->enabled > 1 || r->quiet_enabled > 1 || !isfinite(r->threshold_c) ||
+      r->threshold_c < 40 || r->threshold_c > 150 || r->quiet_start_min >= 1440 ||
+      r->quiet_end_min >= 1440 || (r->quiet_enabled && r->quiet_start_min == r->quiet_end_min)) return false;
+  size_t n = strnlen(r->url, sizeof r->url);
+  if (n >= sizeof r->url || strnlen(r->token, sizeof r->token) >= sizeof r->token) return false;
+  if (n) {
+    if (strncmp(r->url, "https://", 8)) return false;
+    const char *topic = strchr(r->url + 8, '/');
+    if (!topic || topic == r->url + 8 || !topic[1]) return false;
+    for (const char *p = r->url + 8; p < topic; ++p)
+      if (!( (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+             (*p >= '0' && *p <= '9') || *p == '.' || *p == '-' || *p == ':')) return false;
+    for (const char *p = topic + 1; *p; ++p)
+      if (!( (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+             (*p >= '0' && *p <= '9') || *p == '_' || *p == '-')) return false;
+  }
+  for (const char *p = r->token; *p; ++p) if ((unsigned char)*p < 33 || (unsigned char)*p > 126) return false;
+  return !r->enabled || n > 0;
+}
+
 static bool validate(const settings_t *s) {
-  if (!valid_cloudflare(&s->cloudflare)) return false;
+  if (!valid_cloudflare(&s->cloudflare) || !valid_refill(&s->refill)) return false;
   if (!isfinite(s->burn_end_temperature_c) || s->burn_end_temperature_c < 0.0f ||
       !isfinite(s->zone_cold_max_c) || s->burn_end_temperature_c >= s->zone_cold_max_c) return false;
   if (s->maximum_brightness > 255 || s->minimum_brightness > s->maximum_brightness) return false;
@@ -130,13 +155,13 @@ void settings_init(void) {
     // so rollback images retain their own layout and credentials.
     const size_t prefix = offsetof(settings_t, cloudflare);
     const size_t old_cloudflare = prefix + 516;
-    const char *keys[] = {NVS_KEY_BLOB, "settings_v3", "settings_v2", NVS_KEY_LEGACY};
+    const char *keys[] = {NVS_KEY_BLOB, "settings_v4", "settings_v3", "settings_v2", NVS_KEY_LEGACY};
     for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
       size_t len = 0;
       if (nvs_get_blob(handle, keys[i], NULL, &len) != ESP_OK) continue;
-      bool current = i < 2;
+      bool current = i < 3;
       bool full_old = len == old_cloudflare + sizeof(cloudflare_settings_t);
-      bool supported = current ? len == (i == 0 ? sizeof(settings_t) : offsetof(settings_t, burn_end_temperature_c)) :
+      bool supported = current ? len == (i == 0 ? sizeof(settings_t) : i == 1 ? offsetof(settings_t, refill) : offsetof(settings_t, burn_end_temperature_c)) :
           full_old || len == old_cloudflare || len == old_cloudflare + 16 ||
           len == old_cloudflare + 20 || len == prefix + 388 || len == prefix ||
           len == offsetof(settings_t, zone_cold_color) ||
@@ -154,7 +179,7 @@ void settings_init(void) {
                                  sizeof loaded->cloudflare);
           }
           // Seed the new field below even an unusually low legacy cold limit.
-          if (i > 0) loaded->burn_end_temperature_c = fminf(60.0f, fmaxf(0.0f, loaded->zone_cold_max_c - 1.0f));
+          if (i > 1) loaded->burn_end_temperature_c = fminf(60.0f, fmaxf(0.0f, loaded->zone_cold_max_c - 1.0f));
           if (!validate(loaded)) set_defaults(loaded);
         }
         memset(stored, 0, len);
@@ -177,6 +202,12 @@ void settings_get(settings_t *out) {
 void settings_get_cloudflare(cloudflare_settings_t *out) {
   xSemaphoreTake(s_mutex, portMAX_DELAY);
   *out = s_settings->cloudflare;
+  xSemaphoreGive(s_mutex);
+}
+
+void settings_get_refill(refill_settings_t *out) {
+  xSemaphoreTake(s_mutex, portMAX_DELAY);
+  *out = s_settings->refill;
   xSemaphoreGive(s_mutex);
 }
 

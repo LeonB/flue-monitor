@@ -6,7 +6,7 @@
 #include <string.h>
 #include <strings.h>
 
-static const web_route_t *routes[48];
+static const web_route_t *routes[52];
 static size_t route_count;
 
 static esp_err_t native_handler(httpd_req_t *native) {

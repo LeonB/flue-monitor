@@ -21,6 +21,7 @@
 #include "cloudflare_tunnel.h"
 #include "memory_diagnostics.h"
 #include "sheets_logger.h"
+#include "refill_notify.h"
 #include "ws_server.h"
 #include "web_assets_generated.h"
 #include "compressed_assets.h"
@@ -501,6 +502,15 @@ static const web_route_t devices_wifi_get_uri = {
 };
 
 static void settings_to_json(const settings_t *s, cJSON *root) {
+  cJSON_AddBoolToObject(root, "refill_enabled", s->refill.enabled);
+  cJSON_AddNumberToObject(root, "refill_threshold_c", s->refill.threshold_c);
+  cJSON_AddBoolToObject(root, "refill_quiet_enabled", s->refill.quiet_enabled);
+  cJSON_AddNumberToObject(root, "refill_quiet_start_min", s->refill.quiet_start_min);
+  cJSON_AddNumberToObject(root, "refill_quiet_end_min", s->refill.quiet_end_min);
+  // A public ntfy topic URL acts as a subscription secret. Do not expose it
+  // through the credential-free settings endpoint used by flue-display.
+  cJSON_AddBoolToObject(root, "refill_url_set", *s->refill.url != 0);
+  cJSON_AddBoolToObject(root, "refill_token_set", *s->refill.token != 0);
   cJSON_AddBoolToObject(root, "cloudflare_enabled", s->cloudflare.enabled);
   cJSON_AddStringToObject(root, "cloudflare_hostname", s->cloudflare.hostname);
   cJSON_AddNumberToObject(root, "cloudflare_connections", s->cloudflare.connections);
@@ -614,6 +624,33 @@ static esp_err_t settings_post_handler(web_request_t *req) {
   memcpy(s->google_sheets_webhook_url, current->google_sheets_webhook_url, sizeof s->google_sheets_webhook_url);
   memcpy(s->google_sheets_secret, current->google_sheets_secret, sizeof s->google_sheets_secret);
   cJSON *item;
+  s->refill = current->refill;
+  const char *refill_bools[] = {"refill_enabled", "refill_quiet_enabled"};
+  uint32_t *refill_flags[] = {&s->refill.enabled, &s->refill.quiet_enabled};
+  for (int i = 0; i < 2; ++i) {
+    item = cJSON_GetObjectItemCaseSensitive(root, refill_bools[i]);
+    if (item && !cJSON_IsBool(item)) goto invalid_refill;
+    if (item) *refill_flags[i] = cJSON_IsTrue(item);
+  }
+  item = cJSON_GetObjectItemCaseSensitive(root, "refill_threshold_c");
+  if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble))) goto invalid_refill;
+  if (item) s->refill.threshold_c = item->valuedouble;
+  const char *quiet_keys[] = {"refill_quiet_start_min", "refill_quiet_end_min"};
+  uint32_t *quiet_values[] = {&s->refill.quiet_start_min, &s->refill.quiet_end_min};
+  for (int i = 0; i < 2; ++i) {
+    item = cJSON_GetObjectItemCaseSensitive(root, quiet_keys[i]);
+    if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
+        item->valuedouble < 0 || item->valuedouble >= 1440 || floor(item->valuedouble) != item->valuedouble)) goto invalid_refill;
+    if (item) *quiet_values[i] = item->valuedouble;
+  }
+  const char *refill_strings[] = {"refill_url", "refill_token"};
+  char *refill_values[] = {s->refill.url, s->refill.token};
+  const size_t refill_sizes[] = {sizeof s->refill.url, sizeof s->refill.token};
+  for (int i = 0; i < 2; ++i) {
+    item = cJSON_GetObjectItemCaseSensitive(root, refill_strings[i]);
+    if (item && (!cJSON_IsString(item) || strlen(item->valuestring) >= refill_sizes[i])) goto invalid_refill;
+    if (item && *item->valuestring) strcpy(refill_values[i], item->valuestring);
+  }
 
   item = cJSON_GetObjectItem(root, "log_heartbeat_min");
   s->log_heartbeat_min = cJSON_IsNumber(item) ? (uint16_t) item->valuedouble : 0;
@@ -735,13 +772,19 @@ static esp_err_t settings_post_handler(web_request_t *req) {
   ws_server_broadcast_settings_changed();
 
   web_set_type(req, "application/json");
-  char response[128];
-  snprintf(response, sizeof(response), "{\"success\":true,\"settings_revision\":%lu,\"cloudflare_token_set\":%s}",
-           (unsigned long) revision, *s->cloudflare.token ? "true" : "false");
+  char response[192];
+  snprintf(response, sizeof(response), "{\"success\":true,\"settings_revision\":%lu,\"cloudflare_token_set\":%s,\"refill_url_set\":%s,\"refill_token_set\":%s}",
+           (unsigned long) revision, *s->cloudflare.token ? "true" : "false",
+           *s->refill.url ? "true" : "false", *s->refill.token ? "true" : "false");
   web_sendstr(req, response);
   if (memcmp(&current->cloudflare, &s->cloudflare, sizeof s->cloudflare)) cloudflare_tunnel_start();
   free(snapshots);
   return ESP_OK;
+
+invalid_refill:
+  cJSON_Delete(root);
+  free(snapshots);
+  return web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid refill notification setting");
 
 invalid_cloudflare:
   cJSON_Delete(root);
@@ -959,6 +1002,7 @@ static esp_err_t event_post_handler(web_request_t *req) {
   // flag instead (see below) means there's nothing to retry -- the queue
   // draining on its own is what actually resolves this, not another tap.
   event_log_push(canonical);
+  refill_notify_manual_event(canonical);
   bool sheets_queued = sheets_logger_log_event(canonical);
   if (!sheets_queued) {
     ESP_LOGW(TAG, "Sheets log queue full -- '%s' recorded locally but not queued for Sheets", canonical);
@@ -1107,7 +1151,7 @@ httpd_handle_t rest_api_start(void) {
   // must cover every endpoint on this server" section for how this was
   // caught: ws_server_register(), always the last one registered, is the
   // one that fails once the ceiling is hit).
-  config.max_uri_handlers = 45;
+  config.max_uri_handlers = 49;
   config.max_open_sockets = REST_API_MAX_OPEN_SOCKETS;
   config.lru_purge_enable = true;
   config.keep_alive_enable = true;

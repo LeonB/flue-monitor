@@ -20,6 +20,14 @@ typedef struct {
   char token[SETTINGS_CLOUDFLARE_TOKEN_MAX_LEN];
 } cloudflare_settings_t;
 
+typedef struct {
+  uint32_t enabled;
+  float threshold_c;
+  uint32_t quiet_enabled, quiet_start_min, quiet_end_min;
+  char url[192];
+  char token[128];
+} refill_settings_t;
+
 // Runtime-editable tunables -- replaces the ESPHome sidecar's YAML
 // `substitutions:` block. NVS-backed (see settings.c), with config.h's
 // DEFAULT_* macros used only as first-boot seed values.
@@ -49,6 +57,7 @@ typedef struct {
   uint32_t minimum_brightness; // 0..255, LED channel floor
   cloudflare_settings_t cloudflare;
   float burn_end_temperature_c; // Graph sessions only; append for NVS migration.
+  refill_settings_t refill;
 } settings_t;
 
 // Loads settings from NVS, seeding config.h's compile-time defaults if NVS
@@ -62,6 +71,7 @@ void settings_init(void);
 // internally mutex-guarded against a concurrent settings_set().
 void settings_get(settings_t *out);
 void settings_get_cloudflare(cloudflare_settings_t *out);
+void settings_get_refill(refill_settings_t *out);
 // Atomic pair for sensor classification, without copying credentials/settings.
 void settings_get_zone_limits(float *cold_max_c, float *optimal_max_c);
 

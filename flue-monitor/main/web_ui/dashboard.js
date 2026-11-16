@@ -180,6 +180,8 @@ function app() {
     lastReadingMs: 0,
     settings: {},
     draft: {},
+    refillStatus: {},
+    refillBusy: false,
     bosch: { state: 'unavailable', available: false },
     boschDevice: '',
     boschZone: 'zn1',
@@ -337,6 +339,8 @@ function app() {
       setInterval(() => this.fetchDeviceWifi(), 10000);
       setInterval(() => this.fetchBosch(), 5000);
       this.fetchBosch();
+      this.fetchRefillStatus();
+      setInterval(() => this.fetchRefillStatus(), 10000);
       requestAnimationFrame((t) => this.runGlowFrame(t));
       await Promise.all([this.fetchReading(), this.fetchSettings(), this.fetchEvents(), this.fetchDeviceWifi()]);
       this.fetchHistory(); // Warm the graph while the dashboard is visible.
@@ -349,6 +353,45 @@ function app() {
         throw new Error('Your session expired. Sign in again.');
       }
       return response;
+    },
+
+    async fetchRefillStatus() {
+      try {
+        const res = await this.authorizedFetch('/api/refill/status', { cache:'no-store', signal:AbortSignal.timeout(3000) });
+        this.refillStatus = res.ok ? await res.json() : {};
+      } catch { this.refillStatus = {}; }
+    },
+
+    get refillStatusText() {
+      const s = this.refillStatus;
+      if (s.result === 'pending' || s.result === 'sending') return 'Sending notification…';
+      if (s.result === 'failed') return 'Last notification could not be sent. Check the destination and token.';
+      if (!this.settings.refill_enabled) return 'Refill reminders are off.';
+      if (s.quiet) return 'Quiet hours: refill reminders are paused.';
+      if (!s.result) return 'Notification status unavailable.';
+      if (s.result === 'sent') return 'Last notification accepted by ntfy.';
+      return s.armed ? 'Watching for cooling after the fire.' : 'Waiting for sustained warming.';
+    },
+
+    refillTime(minutes) {
+      return `${String(Math.floor((minutes ?? 0) / 60)).padStart(2,'0')}:${String((minutes ?? 0) % 60).padStart(2,'0')}`;
+    },
+    setRefillTime(key, value) {
+      if (/^\d{2}:\d{2}$/.test(value)) {
+        const [hour, minute] = value.split(':').map(Number);
+        if (hour < 24 && minute < 60) this.draft[key] = hour * 60 + minute;
+      }
+    },
+    async refillAction(action) {
+      if (this.refillBusy) return;
+      this.refillBusy = true;
+      try {
+        const res = await this.authorizedFetch('/api/refill/' + action, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+        if (!res.ok) throw new Error('rejected');
+        this.showToast(action === 'test' ? 'Test queued; check your ntfy app shortly' : 'Quiet hours updated');
+        await this.fetchRefillStatus();
+      } catch { this.showToast('Could not update notifications. Save your settings and try again.'); }
+      finally { this.refillBusy = false; }
     },
 
     async fetchDeviceWifi() {
@@ -619,14 +662,16 @@ function app() {
         if (!res.ok) throw new Error('rejected');
         saved = true;
         const result = await res.json();
-        // Forget a submitted tunnel secret after success; retain any newer edit.
-        if ('cloudflare_token' in submitted) {
-          if (this.draft.cloudflare_token === submitted.cloudflare_token) this.draft.cloudflare_token = '';
-          submitted.cloudflare_token = '';
-        }
-        if (typeof result.cloudflare_token_set === 'boolean') {
-          submitted.cloudflare_token_set = result.cloudflare_token_set;
-          this.draft.cloudflare_token_set = result.cloudflare_token_set;
+        // Clear submitted credentials, preserving any newer edit made in flight.
+        for (const key of ['cloudflare_token','refill_url','refill_token']) {
+          if (key in submitted) {
+            if (this.draft[key] === submitted[key]) this.draft[key] = '';
+            submitted[key] = '';
+          }
+          const flag = key + '_set';
+          if (typeof result[flag] === 'boolean') {
+            submitted[flag] = result[flag]; this.draft[flag] = result[flag];
+          }
         }
         submitted.settings_revision = result.settings_revision;
         this.draft.settings_revision = result.settings_revision;

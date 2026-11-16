@@ -1,4 +1,5 @@
 #include "sheets_logger.h"
+#include "refill_notify.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -266,6 +267,8 @@ static void sheets_logger_task(void *arg) {
   (void) arg;
 
   while (true) {
+    settings_get(&s_buffers->settings);
+    refill_notify_send_pending(&s_buffers->settings);
     queued_event_t item;
     if (xQueueReceive(s_event_queue, &item, pdMS_TO_TICKS(30000)) == pdTRUE) {
       // An event-triggered log (Milestone 7's future POST /api/event) --
