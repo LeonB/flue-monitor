@@ -26,3 +26,11 @@ def native_source(source, tunnel='false'):
     source = source.replace('web_send_owned(req, json)', '({ int sent = httpd_resp_sendstr(req, json); free(json); sent; })')
     source = source.replace('web_send_owned(req,json)', '({ int sent = httpd_resp_sendstr(req,json); free(json); sent; })')
     return source
+
+
+def body_reader(native=True):
+    """Compile the production body reader against the fixture's receive mock."""
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / 'main/web_request.c').read_text()
+    source = source[source.index('bool web_read_body('):source.index('esp_err_t web_set_header(')]
+    return native_source(source) if native else source

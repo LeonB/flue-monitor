@@ -4,7 +4,7 @@ Real cJSON and production C functions; network, NVS and RTOS are deterministic s
 Does not contact Bosch, use real tokens or write device settings.
 """
 from pathlib import Path
-from web_test_shim import native_source
+from web_test_shim import native_source, body_reader
 import subprocess
 import tempfile
 import base64
@@ -188,7 +188,7 @@ int main(void) {
 }
 '''
 with tempfile.TemporaryDirectory(prefix='flue-bosch-test-') as tmp:
-    p=Path(tmp);(p/'test.c').write_text(preamble+core+handler+tests)
+    p=Path(tmp);(p/'test.c').write_text(preamble+body_reader()+core+handler+tests)
     cjson=root/'managed_components/espressif__cjson/cJSON'
     subprocess.run(['clang','-std=c11','-D_DARWIN_C_SOURCE','-g','-Wno-deprecated-declarations','-fsanitize=address,undefined',
                     '-I'+str(root/'main'),'-I'+str(cjson),str(p/'test.c'),str(cjson/'cJSON.c'),'-o',str(p/'test')],check=True)

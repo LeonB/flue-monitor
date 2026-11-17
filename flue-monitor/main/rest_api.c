@@ -2,6 +2,7 @@
 #include "web_request.h"
 
 #include <math.h>
+#include <float.h>
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -63,15 +64,10 @@ static esp_err_t auth_form_handler(web_request_t *req) {
   if (req->content_len <= 0 || req->content_len > 512) return web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request");
   char *body = buffer_memory_calloc(req->content_len + 1, 1);
   if (!body) return web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
-  size_t got = 0;
-  while (got < req->content_len) {
-    int part = web_recv(req, body + got, req->content_len - got);
-    if (part <= 0) {
-      memset(body, 0, req->content_len + 1);
-      free(body);
-      return web_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
-    }
-    got += part;
+  if (!web_read_body(req, body, req->content_len)) {
+    memset(body, 0, req->content_len + 1);
+    free(body);
+    return web_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
   }
   cJSON *root = cJSON_Parse(body);
   memset(body, 0, req->content_len + 1);
@@ -229,48 +225,34 @@ static esp_err_t web_startup_get_handler(web_request_t *req) {
   if (web_query(req, query, sizeof(query)) != ESP_OK ||
       httpd_query_key_value(query, "size", size, sizeof(size)) != ESP_OK)
     return web_send_err(req, HTTPD_404_NOT_FOUND, "Unknown launch image");
-  if (strcmp(size, "640x1136") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_640x1136_RAW_SIZE,
-      ASSET_startup_640x1136_ETAG, asset_startup_640x1136_gzip, sizeof(asset_startup_640x1136_gzip), ASSET_startup_640x1136_GZIP_ETAG);
-  if (strcmp(size, "750x1334") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_750x1334_RAW_SIZE,
-      ASSET_startup_750x1334_ETAG, asset_startup_750x1334_gzip, sizeof(asset_startup_750x1334_gzip), ASSET_startup_750x1334_GZIP_ETAG);
-  if (strcmp(size, "1242x2208") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1242x2208_RAW_SIZE,
-      ASSET_startup_1242x2208_ETAG, asset_startup_1242x2208_gzip, sizeof(asset_startup_1242x2208_gzip), ASSET_startup_1242x2208_GZIP_ETAG);
-  if (strcmp(size, "1125x2436") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1125x2436_RAW_SIZE,
-      ASSET_startup_1125x2436_ETAG, asset_startup_1125x2436_gzip, sizeof(asset_startup_1125x2436_gzip), ASSET_startup_1125x2436_GZIP_ETAG);
-  if (strcmp(size, "828x1792") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_828x1792_RAW_SIZE,
-      ASSET_startup_828x1792_ETAG, asset_startup_828x1792_gzip, sizeof(asset_startup_828x1792_gzip), ASSET_startup_828x1792_GZIP_ETAG);
-  if (strcmp(size, "1242x2688") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1242x2688_RAW_SIZE,
-      ASSET_startup_1242x2688_ETAG, asset_startup_1242x2688_gzip, sizeof(asset_startup_1242x2688_gzip), ASSET_startup_1242x2688_GZIP_ETAG);
-  if (strcmp(size, "1170x2532") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1170x2532_RAW_SIZE,
-      ASSET_startup_1170x2532_ETAG, asset_startup_1170x2532_gzip, sizeof(asset_startup_1170x2532_gzip), ASSET_startup_1170x2532_GZIP_ETAG);
-  if (strcmp(size, "1179x2556") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1179x2556_RAW_SIZE,
-      ASSET_startup_1179x2556_ETAG, asset_startup_1179x2556_gzip, sizeof(asset_startup_1179x2556_gzip), ASSET_startup_1179x2556_GZIP_ETAG);
-  if (strcmp(size, "1206x2622") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1206x2622_RAW_SIZE,
-      ASSET_startup_1206x2622_ETAG, asset_startup_1206x2622_gzip, sizeof(asset_startup_1206x2622_gzip), ASSET_startup_1206x2622_GZIP_ETAG);
-  if (strcmp(size, "1284x2778") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1284x2778_RAW_SIZE,
-      ASSET_startup_1284x2778_ETAG, asset_startup_1284x2778_gzip, sizeof(asset_startup_1284x2778_gzip), ASSET_startup_1284x2778_GZIP_ETAG);
-  if (strcmp(size, "1290x2796") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1290x2796_RAW_SIZE,
-      ASSET_startup_1290x2796_ETAG, asset_startup_1290x2796_gzip, sizeof(asset_startup_1290x2796_gzip), ASSET_startup_1290x2796_GZIP_ETAG);
-  if (strcmp(size, "1320x2868") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1320x2868_RAW_SIZE,
-      ASSET_startup_1320x2868_ETAG, asset_startup_1320x2868_gzip, sizeof(asset_startup_1320x2868_gzip), ASSET_startup_1320x2868_GZIP_ETAG);
-  if (strcmp(size, "1260x2736") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1260x2736_RAW_SIZE,
-      ASSET_startup_1260x2736_ETAG, asset_startup_1260x2736_gzip, sizeof(asset_startup_1260x2736_gzip), ASSET_startup_1260x2736_GZIP_ETAG);
-  if (strcmp(size, "1080x2340") == 0)
-    return serve_asset(req, "image/png", NULL, ASSET_startup_1080x2340_RAW_SIZE,
-      ASSET_startup_1080x2340_ETAG, asset_startup_1080x2340_gzip, sizeof(asset_startup_1080x2340_gzip), ASSET_startup_1080x2340_GZIP_ETAG);
+  static const struct {
+    const char *size, *etag, *gzip_etag;
+    const unsigned char *gzip;
+    size_t raw_size, gzip_size;
+  } images[] = {
+#define STARTUP_IMAGE(dim) {#dim, ASSET_startup_##dim##_ETAG, ASSET_startup_##dim##_GZIP_ETAG, \
+    asset_startup_##dim##_gzip, ASSET_startup_##dim##_RAW_SIZE, sizeof(asset_startup_##dim##_gzip)}
+    STARTUP_IMAGE(640x1136),
+    STARTUP_IMAGE(750x1334),
+    STARTUP_IMAGE(1242x2208),
+    STARTUP_IMAGE(1125x2436),
+    STARTUP_IMAGE(828x1792),
+    STARTUP_IMAGE(1242x2688),
+    STARTUP_IMAGE(1170x2532),
+    STARTUP_IMAGE(1179x2556),
+    STARTUP_IMAGE(1206x2622),
+    STARTUP_IMAGE(1284x2778),
+    STARTUP_IMAGE(1290x2796),
+    STARTUP_IMAGE(1320x2868),
+    STARTUP_IMAGE(1260x2736),
+    STARTUP_IMAGE(1080x2340),
+#undef STARTUP_IMAGE
+  };
+  for (size_t i = 0; i < sizeof images / sizeof images[0]; i++) {
+    if (!strcmp(size, images[i].size))
+      return serve_asset(req, "image/png", NULL, images[i].raw_size, images[i].etag,
+                         images[i].gzip, images[i].gzip_size, images[i].gzip_etag);
+  }
   return web_send_err(req, HTTPD_404_NOT_FOUND, "Unknown launch image");
 }
 static const web_route_t web_startup_uri = { .uri="/startup.png", .method=HTTP_GET, .handler=web_startup_get_handler };
@@ -536,6 +518,14 @@ static void settings_to_json(const settings_t *s, cJSON *root) {
   cJSON_AddNumberToObject(root, "breathing_exponent", round_to(s->breathing_exponent, 0.1));
 }
 
+// Check the JSON double before narrowing it to float or an unsigned integer.
+// Domain rules (threshold ordering, positive periods, etc.) stay in settings.c.
+static bool json_number(const cJSON *item, double minimum, double maximum, bool integer) {
+  return cJSON_IsNumber(item) && isfinite(item->valuedouble) &&
+         item->valuedouble >= minimum && item->valuedouble <= maximum &&
+         (!integer || floor(item->valuedouble) == item->valuedouble);
+}
+
 static esp_err_t settings_get_handler(web_request_t *req) {
   bool device_settings = !web_request_is_tunnel(req) && !dashboard_auth_is_remote(req) && !dashboard_auth_check(req);
   if (!device_settings && auth_required(req)) return ESP_FAIL;
@@ -567,15 +557,10 @@ static const web_route_t settings_get_uri = {
     .handler = settings_get_handler,
 };
 
-// Credential-free settings for the tunnel; omitted credentials on tunnel
-// POSTs retain their stored values. Normal LAN full-replace behavior remains.
-
-// Full-replace semantics, matching the planned web UI's single sticky Save
-// bar (no per-field PATCH to preserve) -- a field missing from the request
-// body becomes that field's zero value (numeric) or empty string, not
-// "leave whatever was there before". Colours are the compatibility exception:
-// older clients may omit them, retaining the saved palette. Breathing shape
-// likewise retains its saved value when omitted.
+// Original scalar tuning fields default to zero when omitted. Later fields
+// (palette, brightness, shape, burn end, Cloudflare and refill) retain saved
+// values for older clients. Omitted Sheets credentials also retain saved values;
+// explicit empty Sheets strings clear them, while blank CF/refill secrets retain.
 static esp_err_t settings_post_handler(web_request_t *req) {
   // Local commissioning is allowed before the owner sets the first password.
   // Tunnel visitors always require a session, even before setup.
@@ -591,20 +576,11 @@ static esp_err_t settings_post_handler(web_request_t *req) {
     web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
     return ESP_FAIL;
   }
-  size_t received = 0;
-  while (received < req->content_len) {
-    int ret = web_recv(req, body + received, req->content_len - received);
-    if (ret <= 0) {
-      if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-        continue;
-      }
-      free(body);
-      web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read request body");
-      return ESP_FAIL;
-    }
-    received += ret;
+  if (!web_read_body(req, body, req->content_len)) {
+    free(body);
+    web_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
+    return ESP_FAIL;
   }
-  body[received] = '\0';
 
   cJSON *root = cJSON_Parse(body);
   free(body);
@@ -621,6 +597,18 @@ static esp_err_t settings_post_handler(web_request_t *req) {
   }
   settings_t *s = &snapshots[0], *current = &snapshots[1];
   settings_get(current);
+  const char *float_keys[] = {"zone_cold_max_c", "zone_optimal_max_c", "fast_rise_c_per_min",
+    "thermocouple_deadband_c", "rate_deadband_c_per_min", "color_transition_exponent",
+    "breathing_exponent", "burn_end_temperature_c", "refill_threshold_c"};
+  for (size_t i = 0; i < sizeof float_keys / sizeof float_keys[0]; i++) {
+    const cJSON *value = cJSON_GetObjectItem(root, float_keys[i]);
+    if (value && !json_number(value, -FLT_MAX, FLT_MAX, false)) goto invalid_number;
+  }
+  const char *integer_keys[] = {"log_heartbeat_min", "idle_pulse_period_ms", "fast_pulse_period_ms"};
+  for (size_t i = 0; i < sizeof integer_keys / sizeof integer_keys[0]; i++) {
+    const cJSON *value = cJSON_GetObjectItem(root, integer_keys[i]);
+    if (value && !json_number(value, 0, UINT16_MAX, true)) goto invalid_number;
+  }
   memcpy(s->google_sheets_webhook_url, current->google_sheets_webhook_url, sizeof s->google_sheets_webhook_url);
   memcpy(s->google_sheets_secret, current->google_sheets_secret, sizeof s->google_sheets_secret);
   cJSON *item;
@@ -633,14 +621,12 @@ static esp_err_t settings_post_handler(web_request_t *req) {
     if (item) *refill_flags[i] = cJSON_IsTrue(item);
   }
   item = cJSON_GetObjectItemCaseSensitive(root, "refill_threshold_c");
-  if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble))) goto invalid_refill;
   if (item) s->refill.threshold_c = item->valuedouble;
   const char *quiet_keys[] = {"refill_quiet_start_min", "refill_quiet_end_min"};
   uint32_t *quiet_values[] = {&s->refill.quiet_start_min, &s->refill.quiet_end_min};
   for (int i = 0; i < 2; ++i) {
     item = cJSON_GetObjectItemCaseSensitive(root, quiet_keys[i]);
-    if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
-        item->valuedouble < 0 || item->valuedouble >= 1440 || floor(item->valuedouble) != item->valuedouble)) goto invalid_refill;
+    if (item && !json_number(item, 0, 1439, true)) goto invalid_refill;
     if (item) *quiet_values[i] = item->valuedouble;
   }
   const char *refill_strings[] = {"refill_url", "refill_token"};
@@ -660,11 +646,6 @@ static esp_err_t settings_post_handler(web_request_t *req) {
 
   // Older clients retain the saved session threshold when omitting this field.
   item = cJSON_GetObjectItem(root, "burn_end_temperature_c");
-  if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble))) {
-    cJSON_Delete(root);
-    free(snapshots);
-    return web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid session end temperature");
-  }
   s->burn_end_temperature_c = item ? (float)item->valuedouble : current->burn_end_temperature_c;
 
   item = cJSON_GetObjectItem(root, "zone_optimal_max_c");
@@ -705,8 +686,7 @@ static esp_err_t settings_post_handler(web_request_t *req) {
   if (item && !cJSON_IsBool(item)) goto invalid_cloudflare;
   if (item) s->cloudflare.enabled = cJSON_IsTrue(item);
   item = cJSON_GetObjectItemCaseSensitive(root, "cloudflare_connections");
-  if (item && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
-      item->valuedouble < 1 || item->valuedouble > 4 || floor(item->valuedouble) != item->valuedouble)) goto invalid_cloudflare;
+  if (item && !json_number(item, 1, 4, true)) goto invalid_cloudflare;
   if (item) s->cloudflare.connections = (uint32_t)item->valuedouble;
   const char *cf_keys[] = {"cloudflare_hostname", "cloudflare_token"};
   char *cf_values[] = {s->cloudflare.hostname, s->cloudflare.token};
@@ -720,8 +700,7 @@ static esp_err_t settings_post_handler(web_request_t *req) {
     if (i == 0) for (char *c = cf_values[i]; *c; c++) *c = tolower((unsigned char)*c);
   }
   item = cJSON_GetObjectItemCaseSensitive(root, "minimum_brightness");
-  if (item != NULL && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
-      item->valuedouble < 0 || item->valuedouble > 255 || floor(item->valuedouble) != item->valuedouble)) {
+  if (item != NULL && !json_number(item, 0, 255, true)) {
     cJSON_Delete(root);
     web_send_err(req, HTTPD_400_BAD_REQUEST, "Minimum brightness must be an integer from 0 to 255");
     free(snapshots);
@@ -729,8 +708,7 @@ static esp_err_t settings_post_handler(web_request_t *req) {
   }
   s->minimum_brightness = item == NULL ? current->minimum_brightness : (uint32_t) item->valuedouble;
   item = cJSON_GetObjectItemCaseSensitive(root, "maximum_brightness");
-  if (item != NULL && (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
-      item->valuedouble < 0 || item->valuedouble > 255 || floor(item->valuedouble) != item->valuedouble)) {
+  if (item != NULL && !json_number(item, 0, 255, true)) {
     cJSON_Delete(root);
     web_send_err(req, HTTPD_400_BAD_REQUEST, "Maximum brightness must be an integer from 0 to 255");
     free(snapshots);
@@ -738,8 +716,7 @@ static esp_err_t settings_post_handler(web_request_t *req) {
   }
   s->maximum_brightness = item == NULL ? current->maximum_brightness : (uint32_t) item->valuedouble;
   item = cJSON_GetObjectItemCaseSensitive(root, "breathing_exponent");
-  s->breathing_exponent = item == NULL ? current->breathing_exponent :
-                        cJSON_IsNumber(item) ? (float) item->valuedouble : NAN;
+  s->breathing_exponent = item == NULL ? current->breathing_exponent : (float) item->valuedouble;
   const char *keys[] = {"zone_cold_color", "zone_optimal_color", "zone_hot_color"};
   char *colors[] = {s->zone_cold_color, s->zone_optimal_color, s->zone_hot_color};
   const char *previous[] = {current->zone_cold_color, current->zone_optimal_color, current->zone_hot_color};
@@ -780,6 +757,11 @@ static esp_err_t settings_post_handler(web_request_t *req) {
   if (memcmp(&current->cloudflare, &s->cloudflare, sizeof s->cloudflare)) cloudflare_tunnel_start();
   free(snapshots);
   return ESP_OK;
+
+invalid_number:
+  cJSON_Delete(root);
+  free(snapshots);
+  return web_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid numeric setting");
 
 invalid_refill:
   cJSON_Delete(root);
@@ -961,19 +943,10 @@ static esp_err_t event_post_handler(web_request_t *req) {
   }
 
   char body[128] = {0};
-  size_t received = 0;
-  while (received < req->content_len) {
-    int ret = web_recv(req, body + received, req->content_len - received);
-    if (ret <= 0) {
-      if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-        continue;
-      }
-      web_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read request body");
-      return ESP_FAIL;
-    }
-    received += ret;
+  if (!web_read_body(req, body, req->content_len)) {
+    web_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
+    return ESP_FAIL;
   }
-  body[received] = '\0';
 
   cJSON *root = cJSON_Parse(body);
   if (root == NULL) {

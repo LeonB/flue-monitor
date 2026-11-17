@@ -1,7 +1,7 @@
 #!/bin/sh
-# Activates the ESP-IDF v5.5.5 toolchain for this project. This reuses the
-# exact copy of ESP-IDF that ESPHome itself already downloaded and cached
-# (see CLAUDE.md) rather than a separate, redundant multi-GB install.
+# Activates the ESP-IDF v6.0.3 toolchain for this project. This selects the
+# official 6.0.3 release installed alongside the prior SDK in the existing
+# ESPHome tool cache (see CLAUDE.md).
 #
 # Usage: source this file, don't execute it, so the environment changes
 # apply to your current shell:
@@ -15,5 +15,15 @@
 #   cd flue-display && . ./activate-idf.sh && idf.py build
 
 export IDF_TOOLS_PATH="$HOME/Library/Caches/esphome/idf"
-export IDF_PATH="$IDF_TOOLS_PATH/frameworks/5.5.5"
+export IDF_PATH="$IDF_TOOLS_PATH/frameworks/6.0.3"
+if [ ! -r "$IDF_PATH/export.sh" ]; then
+    echo "ESP-IDF 6.0.3 is missing at $IDF_PATH" >&2
+    return 1
+fi
+# Use the Python environment installed for this SDK even when Homebrew's
+# default python3 advances to a newer minor version.
+if [ -x "$IDF_TOOLS_PATH/python_env/idf6.0_py3.14_env/bin/python" ]; then
+    export IDF_PYTHON_ENV_PATH="$IDF_TOOLS_PATH/python_env/idf6.0_py3.14_env"
+    . "$IDF_PYTHON_ENV_PATH/bin/activate"
+fi
 . "$IDF_PATH/export.sh" > /dev/null

@@ -79,15 +79,19 @@ static void wifi_init_softap(const char *ap_ssid, const char *ap_password, int m
   ESP_LOGI(TAG, "SoftAP started. SSID:'%s' password:'%s'", ap_ssid, ap_password);
 }
 
-static esp_err_t root_get_handler(httpd_req_t *req) {
-  const compressed_asset_t *asset = portal_root_asset();
-  httpd_resp_set_type(req, "text/html");
+static esp_err_t serve_portal_asset(httpd_req_t *req, const compressed_asset_t *asset,
+                                    const char *type) {
+  httpd_resp_set_type(req, type);
   httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
   if (compressed_asset_accepts_gzip(req)) {
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     return httpd_resp_send(req, (const char *)asset->data, asset->size);
   }
   return compressed_asset_send_identity(req, asset->data, asset->size, asset->raw_size);
+}
+
+static esp_err_t root_get_handler(httpd_req_t *req) {
+  return serve_portal_asset(req, portal_root_asset(), "text/html");
 }
 
 static const httpd_uri_t root_uri = {
@@ -97,26 +101,12 @@ static const httpd_uri_t root_uri = {
 };
 
 static esp_err_t styles_css_get_handler(httpd_req_t *req) {
-  const compressed_asset_t *asset = portal_styles_asset();
-  httpd_resp_set_type(req, "text/css");
-  httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
-  if (compressed_asset_accepts_gzip(req)) {
-    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-    return httpd_resp_send(req, (const char *)asset->data, asset->size);
-  }
-  return compressed_asset_send_identity(req, asset->data, asset->size, asset->raw_size);
+  return serve_portal_asset(req, portal_styles_asset(), "text/css");
 }
 static const httpd_uri_t styles_css_uri = {.uri = "/styles.css", .method = HTTP_GET, .handler = styles_css_get_handler};
 
 static esp_err_t alpine_js_get_handler(httpd_req_t *req) {
-  const compressed_asset_t *asset = portal_alpine_asset();
-  httpd_resp_set_type(req, "application/javascript");
-  httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
-  if (compressed_asset_accepts_gzip(req)) {
-    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-    return httpd_resp_send(req, (const char *)asset->data, asset->size);
-  }
-  return compressed_asset_send_identity(req, asset->data, asset->size, asset->raw_size);
+  return serve_portal_asset(req, portal_alpine_asset(), "application/javascript");
 }
 static const httpd_uri_t alpine_js_uri = {.uri = "/alpine.min.js", .method = HTTP_GET, .handler = alpine_js_get_handler};
 

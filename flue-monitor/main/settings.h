@@ -56,7 +56,7 @@ typedef struct {
   uint32_t maximum_brightness; // 0..255, must be >= minimum
   uint32_t minimum_brightness; // 0..255, LED channel floor
   cloudflare_settings_t cloudflare;
-  float burn_end_temperature_c; // Graph sessions only; append for NVS migration.
+  float burn_end_temperature_c; // Graph and refill session end; append for NVS migration.
   refill_settings_t refill;
 } settings_t;
 
@@ -72,13 +72,13 @@ void settings_init(void);
 void settings_get(settings_t *out);
 void settings_get_cloudflare(cloudflare_settings_t *out);
 void settings_get_refill(refill_settings_t *out);
+float settings_get_burn_end_temperature(void);
 // Atomic pair for sensor classification, without copying credentials/settings.
 void settings_get_zone_limits(float *cold_max_c, float *optimal_max_c);
 
 // Validates and persists new settings, replacing the current ones entirely
-// (matches the REST API's POST /api/settings, which always sends the whole
-// object -- the planned web UI's single sticky Save bar has no per-field
-// PATCH semantics to preserve). Returns ESP_ERR_INVALID_ARG without changing
+// after the REST handler applies its per-field omission/credential rules.
+// Returns ESP_ERR_INVALID_ARG without changing
 // anything, NVS included, if validation fails.
 esp_err_t settings_set(const settings_t *new_settings);
 

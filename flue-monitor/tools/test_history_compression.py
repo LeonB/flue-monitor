@@ -68,3 +68,52 @@ with tempfile.TemporaryDirectory() as directory:
  c.write_text(preamble+header+state+reader+tests)
  subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(c),'-o',str(exe)],check=True)
  subprocess.run([str(exe)],check=True,timeout=20)
+
+# Compare the verifier's policy directly with production C, including a
+# second compression pass, float32 boundaries, rounding and capacity eviction.
+import random
+import struct
+from ota_with_history import compressed_history
+rng = random.Random(17)
+cases = [[], [(i*240,20,r,1) for i,r in enumerate((-.08,-.04,0,-.08,-.12))],
+         [(i*240,20,0,1) for i in range(800)],
+         [(i*240,i % 100,0,1) for i in range(800)]]
+for _ in range(60):
+    cases.append([(i*240, rng.choice([20,20.49,20.5,-1.5,100,600]),
+                   rng.choice([-.12,-.08,-.05,-.04,0,.04,.05,.08,.12]),
+                   rng.choice([1,1,1,2,3])) for i in range(rng.randrange(1,500))])
+cases += [compressed_history(points) for points in cases]
+cli = r'''
+int main(void) {
+ s_history=calloc(SENSORS_HISTORY_CAPACITY,sizeof(*s_history));assert(s_history);
+ unsigned count;
+ while(scanf("%u",&count)==1) {
+  s_history_count=s_history_head=0;
+  for(unsigned i=0;i<count;i++) {
+   history_sample_t p;unsigned zone;
+   assert(scanf("%u %f %f %u",&p.uptime_s,&p.thermocouple_c,&p.thermocouple_rate_c_per_min,&zone)==4);
+   p.thermocouple_zone=zone;history_push(p);
+  }
+  history_sample_t out[SENSORS_HISTORY_CAPACITY];size_t n=sensors_get_history(out,SENSORS_HISTORY_CAPACITY);
+  printf("%zu\n",n);
+  for(size_t i=0;i<n;i++)printf("%u %.9g %.9g %u\n",out[i].uptime_s,
+      out[i].thermocouple_c,out[i].thermocouple_rate_c_per_min,out[i].thermocouple_zone);
+ }
+ free(s_history);
+}
+'''
+with tempfile.TemporaryDirectory() as directory:
+    path=Path(directory);c=path/'policy.c';exe=path/'policy'
+    c.write_text(preamble+header+state+reader+cli)
+    subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(c),'-o',str(exe)],check=True)
+    data=''.join(str(len(points))+'\n'+''.join('%d %.17g %.17g %d\n'%tuple(p) for p in points) for points in cases)
+    result=subprocess.run([str(exe)],input=data,text=True,capture_output=True,check=True,timeout=20)
+    lines=iter(result.stdout.splitlines())
+    f32=lambda x:struct.unpack('<f',struct.pack('<f',float(x)))[0]
+    for points in cases:
+        n=int(next(lines));actual=[]
+        for _ in range(n):
+            t,c,r,z=next(lines).split();actual.append((int(t),f32(c),f32(r),int(z)))
+        assert actual==compressed_history(points)
+    assert next(lines,None) is None
+print('PASS verifier policy matches actual C for 128 rounding/rate/zone/capacity/recompression cases')

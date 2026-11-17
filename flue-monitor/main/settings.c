@@ -112,11 +112,15 @@ static bool valid_refill(const refill_settings_t *r) {
 }
 
 static bool validate(const settings_t *s) {
+  const float numbers[] = {s->zone_cold_max_c, s->zone_optimal_max_c,
+    s->fast_rise_c_per_min, s->thermocouple_deadband_c, s->rate_deadband_c_per_min,
+    s->color_transition_exponent, s->breathing_exponent, s->burn_end_temperature_c};
+  for (size_t i = 0; i < sizeof numbers / sizeof numbers[0]; i++)
+    if (!isfinite(numbers[i])) return false;
   if (!valid_cloudflare(&s->cloudflare) || !valid_refill(&s->refill)) return false;
-  if (!isfinite(s->burn_end_temperature_c) || s->burn_end_temperature_c < 0.0f ||
-      !isfinite(s->zone_cold_max_c) || s->burn_end_temperature_c >= s->zone_cold_max_c) return false;
+  if (s->burn_end_temperature_c < 0.0f || s->burn_end_temperature_c >= s->zone_cold_max_c) return false;
   if (s->maximum_brightness > 255 || s->minimum_brightness > s->maximum_brightness) return false;
-  if (!isfinite(s->breathing_exponent) || s->breathing_exponent < 0.3f || s->breathing_exponent > 3.0f) return false;
+  if (s->breathing_exponent < 0.3f || s->breathing_exponent > 3.0f) return false;
   if (!valid_color(s->zone_cold_color) || !valid_color(s->zone_optimal_color) || !valid_color(s->zone_hot_color)) return false;
   if (s->zone_cold_max_c >= s->zone_optimal_max_c) {
     return false;
@@ -209,6 +213,13 @@ void settings_get_refill(refill_settings_t *out) {
   xSemaphoreTake(s_mutex, portMAX_DELAY);
   *out = s_settings->refill;
   xSemaphoreGive(s_mutex);
+}
+
+float settings_get_burn_end_temperature(void) {
+  xSemaphoreTake(s_mutex, portMAX_DELAY);
+  float temperature = s_settings->burn_end_temperature_c;
+  xSemaphoreGive(s_mutex);
+  return temperature;
 }
 
 void settings_get_zone_limits(float *cold_max_c, float *optimal_max_c) {

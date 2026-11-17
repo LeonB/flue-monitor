@@ -16,6 +16,10 @@
 
 export IDF_TOOLS_PATH="$HOME/Library/Caches/esphome/idf"
 export IDF_PATH="$IDF_TOOLS_PATH/frameworks/6.0.3"
+if [ ! -r "$IDF_PATH/export.sh" ]; then
+    echo "ESP-IDF 6.0.3 is missing at $IDF_PATH" >&2
+    return 1
+fi
 # Use the Python environment installed for this SDK even when Homebrew's
 # default python3 advances to a newer minor version.
 if [ -x "$IDF_TOOLS_PATH/python_env/idf6.0_py3.14_env/bin/python" ]; then

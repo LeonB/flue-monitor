@@ -74,6 +74,16 @@ int web_recv(web_request_t *req, char *out, size_t size) {
   return size;
 }
 
+bool web_read_body(web_request_t *req, char *out, size_t size) {
+  size_t received = 0;
+  while (received < size) {
+    int n = web_recv(req, out + received, size - received);
+    if (n <= 0 || (size_t)n > size - received) return false;
+    received += n;
+  }
+  return true;
+}
+
 esp_err_t web_set_header(web_request_t *req, const char *name, const char *value) {
   if (req->native) return httpd_resp_set_hdr(req->native, name, value);
   web_response_t *r = req->response;

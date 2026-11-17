@@ -469,11 +469,8 @@ static esp_err_t handler(web_request_t *req) {
         if (req->content_len<=0 || req->content_len>=2048) return web_send_err(req,HTTPD_400_BAD_REQUEST,"Body too large");
         char *body=buffer_memory_calloc(req->content_len+1,1);
         if (!body) return unavailable(req,"Insufficient memory");
-        size_t count=0;
-        while (count<req->content_len) {
-            int n=web_recv(req,body+count,req->content_len-count);
-            if (n<=0) { wipe_free(body); return web_send_err(req,HTTPD_408_REQ_TIMEOUT,"Incomplete request"); }
-            count+=n;
+        if (!web_read_body(req,body,req->content_len)) {
+            wipe_free(body); return web_send_err(req,HTTPD_408_REQ_TIMEOUT,"Incomplete request");
         }
         cJSON *o=cJSON_Parse(body); const char *a=jstr(o,"action");
         bool valid=!strcmp(a,"start") || !strcmp(a,"callback") || !strcmp(a,"select") || !strcmp(a,"disconnect");

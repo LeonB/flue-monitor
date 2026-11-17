@@ -4,7 +4,7 @@ Requires an existing ESP-IDF build (uses its cJSON dependency).
 """
 import json
 from pathlib import Path
-from web_test_shim import native_source
+from web_test_shim import native_source, body_reader
 import re
 import subprocess
 import tempfile
@@ -31,6 +31,7 @@ preamble = r'''
 #include <string.h>
 #include <stddef.h>
 #include <math.h>
+#include <float.h>
 #include <ctype.h>
 #include "cJSON.h"
 typedef int esp_err_t;
@@ -191,6 +192,38 @@ int main(void) {
  httpd_req_t device={0};settings_get_handler(&device);assert(device.status==200 && !strstr(device.response,"preserve-sheets"));
  write_api(j,false,401);write_api(j,true,401);configured=false;write_api(j,true,401);write_api(j,false,200);cJSON_Delete(j);
  fail_body_alloc=true;httpd_req_t oom={.content_len=2,.input="{}"};before=writes;settings_post_handler(&oom);assert(oom.status==500 && writes==before && !oom.received);fail_body_alloc=false;
+
+ // Reject narrowing overflow and fractional unsigned values before persistence.
+ authenticated=true;configured=true;
+ const char *floats[]={"zone_cold_max_c","zone_optimal_max_c","fast_rise_c_per_min",
+   "thermocouple_deadband_c","rate_deadband_c_per_min","color_transition_exponent",
+   "breathing_exponent","burn_end_temperature_c","refill_threshold_c"};
+ for(size_t i=0;i<sizeof floats/sizeof floats[0];i++) {
+   settings_t good;set_defaults(&good);
+   cJSON *bad=cJSON_CreateObject();settings_to_json(&good,bad);
+   unsigned unchanged=writes;
+   cJSON_ReplaceItemInObject(bad,floats[i],cJSON_CreateNumber(1e100));write_api(bad,false,400);
+   cJSON_ReplaceItemInObject(bad,floats[i],cJSON_CreateNumber(-1e100));write_api(bad,false,400);
+   cJSON_ReplaceItemInObject(bad,floats[i],cJSON_CreateNull());write_api(bad,false,400);
+   assert(writes==unchanged);cJSON_Delete(bad);
+ }
+ const char *integers[]={"log_heartbeat_min","idle_pulse_period_ms","fast_pulse_period_ms"};
+ const double invalid_integers[]={-1,.5,65536,1e100};
+ for(size_t i=0;i<3;i++)for(size_t k=0;k<4;k++) {
+   settings_t good;set_defaults(&good);cJSON *bad=cJSON_CreateObject();settings_to_json(&good,bad);
+   unsigned unchanged=writes;
+   cJSON_ReplaceItemInObject(bad,integers[i],cJSON_CreateNumber(invalid_integers[k]));
+   write_api(bad,false,400);assert(writes==unchanged);cJSON_Delete(bad);
+ }
+ const size_t offsets[]={offsetof(settings_t,zone_cold_max_c),offsetof(settings_t,zone_optimal_max_c),
+   offsetof(settings_t,fast_rise_c_per_min),offsetof(settings_t,thermocouple_deadband_c),
+   offsetof(settings_t,rate_deadband_c_per_min),offsetof(settings_t,color_transition_exponent),
+   offsetof(settings_t,breathing_exponent),offsetof(settings_t,burn_end_temperature_c)};
+ for(size_t i=0;i<sizeof offsets/sizeof offsets[0];i++)for(int k=0;k<2;k++) {
+   settings_t bad;set_defaults(&bad);*(float *)((char *)&bad+offsets[i])=k?INFINITY:NAN;
+   unsigned unchanged=writes;assert(settings_set(&bad)==ESP_ERR_INVALID_ARG && writes==unchanged);
+ }
+ puts("PASS numeric overflow, nonfinite persisted fields, invalid types and fractional/out-of-range uint16 without writes");
  puts("PASS: v1/v2/v3/v4 migration, v5 roundtrip/corruption, notification settings/redaction/validation, session threshold validation and older API compatibility, preserved old blobs, unchanged credentials, Cloudflare persistence, 1–4 validation, host/token injection rejection, LAN/public redaction, blank/omitted token preservation, reconfiguration, auth and allocation failure");
  return 0;
 }
@@ -198,6 +231,6 @@ int main(void) {
 with tempfile.TemporaryDirectory() as directory:
     source = Path(directory) / 'settings_test.c'
     binary = Path(directory) / 'settings_test'
-    source.write_text(preamble + header + config + settings + serialization + post + tests)
+    source.write_text(preamble + body_reader() + header + config + settings + serialization + post + tests)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-Wno-deprecated-declarations', '-fsanitize=address,undefined', '-I', str(cjson), str(source), str(cjson / 'cJSON.c'), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True, timeout=20)

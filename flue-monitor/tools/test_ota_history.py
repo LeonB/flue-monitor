@@ -77,7 +77,7 @@ try:
         assert (out/'history-after.json').exists()
         assert ota.decode_history((out/'history-before.bin').read_bytes())['samples'] == ota.decode_history(before)['samples']
         assert ota.history_contains(ota.decode_history((out/'history-before.bin').read_bytes()), ota.decode_history((out/'history-after.bin').read_bytes()))
-        assert json.loads((out/'verified.json').read_text())['samples_preserved'] == 2
+        assert json.loads((out/'verified.json').read_text())['samples_exactly_retained'] == 2
         fail_upload = True
         try:
             ota.update(root, f'127.0.0.1:{server.server_port}', image)
@@ -99,6 +99,35 @@ try:
 finally:
     server.shutdown()
     server.server_close()
+# Replaying already-compressed history can remove points whose rate is more
+# than .05 from one final neighbour: the old interpolation heuristic failed.
+raw = [(i*240,20,rate,1) for i,rate in enumerate((-.08,-.04,0,-.08,-.12))]
+old = ota.compressed_history(raw)
+compacted = ota.compressed_history(old)
+assert len(old) == 4 and len(compacted) == 2
+as_snapshot = lambda points: {'saved_at': 1800000000,
+    'samples': [(1800000000-t,c,r,z) for t,c,r,z in points], 'events': []}
+report = ota.history_verification(as_snapshot(old), as_snapshot(compacted))
+assert report['sample_retention'] == 'compression_equivalent' and report['samples_exactly_retained'] == 2
+# Missing a real peak, altering zone/rate, or moving a point beyond clock
+# uncertainty must still fail, even if the rest looks like a flat plateau.
+peak = [(100,20,0,1),(200,80,4,1),(300,20,0,1)]
+assert not ota.history_contains(as_snapshot(peak),as_snapshot([peak[0],peak[-1]]))
+for changed in ([(100,21,0,1),(300,20,0,1)],[(100,20,0,2),(300,20,0,1)],
+                [(100,20,.1,1),(300,20,0,1)],[(103,20,0,1),(300,20,0,1)]):
+    assert not ota.history_contains(as_snapshot([peak[0],peak[-1]]),as_snapshot(changed))
+# A two-second capture uncertainty and genuine new plateau endpoint are accepted.
+assert ota.history_contains(as_snapshot([(100,20,0,1),(200,20,0,1)]),
+                            as_snapshot([(102,20,0,1),(400,20,0,1)]))
+full = as_snapshot([(1000+i*240,20+i,0,1) for i in range(360)])
+old = as_snapshot([(100,10,0,1)])
+old['events'] = [(1800000000-100,2)]
+full['events'] = [(1800000000-(1000+i),2) for i in range(64)]
+capacity = ota.history_verification(old, full)
+assert capacity['sample_retention'] == 'bounded_capacity'
+assert capacity['samples_evicted_by_capacity'] == 1
+assert capacity['events_preserved'] == 0 and capacity['events_evicted_by_capacity'] == 1
+print('PASS recompression-aware retention, exact/equivalent reporting and rejection of changed peaks/values/rates/zones/times')
 print('PASS external backup/restore/read-back, plateau retention, failure diagnostics and no upload retry')
 
 # Absolute UTC records survive delayed and repeated restores without changing

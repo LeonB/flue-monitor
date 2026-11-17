@@ -13,7 +13,12 @@
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static refill_rule_t s_rule;
 static refill_settings_t s_config;
-static bool s_pending, s_test;
+typedef enum { JOB_REFILL, JOB_TEST, JOB_HOT } notification_kind_t;
+static bool s_pending, s_hot_latched;
+static notification_kind_t s_kind;
+static float s_hot_temperature;
+#define HOT_THRESHOLD_C 200.0f
+#define HOT_REARM_C 190.0f
 static int64_t s_created_ms, s_override_until;
 static unsigned s_generation;
 static const char *s_result = "idle";
@@ -26,28 +31,51 @@ static bool scheduled_quiet(const refill_settings_t *config, time_t utc) {
   return refill_quiet_minute(refill_local_minute(utc), config->quiet_start_min, config->quiet_end_min);
 }
 
+// Refill settings never silence a temperature warning. A destination change
+// cancels pending work so credentials/destinations cannot cross configurations.
+static void update_config_locked(const refill_settings_t *config) {
+  if (!memcmp(config, &s_config, sizeof *config)) return;
+  bool destination_changed = strcmp(config->url, s_config.url) || strcmp(config->token, s_config.token);
+  s_config = *config;
+  refill_rule_reset(&s_rule);
+  s_override_until = 0;
+  if (destination_changed || s_kind != JOB_HOT) {
+    s_pending = false;
+    ++s_generation;
+  }
+  if (destination_changed) s_hot_latched = false;
+}
+
 void refill_notify_sample(const sensor_reading_t *reading) {
   refill_settings_t config;
   settings_get_refill(&config);
+  float session_end = settings_get_burn_end_temperature();
   time_t utc = time(NULL);
   bool quiet = scheduled_quiet(&config, utc);
   int64_t now_ms = esp_timer_get_time() / 1000;
   portENTER_CRITICAL(&s_lock);
-  if (memcmp(&config, &s_config, sizeof config)) {
-    s_config = config;
-    refill_rule_reset(&s_rule);
-    s_pending = false;
-    s_override_until = 0;
-    ++s_generation;
+  update_config_locked(&config);
+  bool valid = reading->thermocouple_ok && thermocouple_reading_plausible(reading->thermocouple_c);
+  if (valid && reading->thermocouple_c < HOT_REARM_C) s_hot_latched = false;
+  if (valid && reading->thermocouple_c > HOT_THRESHOLD_C && *config.url) {
+    if (!s_hot_latched) {
+      s_hot_latched = true;
+      s_pending = true; s_kind = JOB_HOT; s_created_ms = now_ms;
+      s_hot_temperature = reading->thermocouple_c;
+      ++s_generation; s_result = "pending";
+    } else if (s_pending && s_kind == JOB_HOT && reading->thermocouple_c > s_hot_temperature)
+      s_hot_temperature = reading->thermocouple_c;
   }
   if (!config.enabled) refill_rule_reset(&s_rule);
   else if (refill_rule_sample(&s_rule, now_ms,
              reading->thermocouple_ok && thermocouple_reading_plausible(reading->thermocouple_c),
-             reading->thermocouple_c, reading->thermocouple_rate_c_per_min, config.threshold_c)) {
+             reading->thermocouple_c, reading->thermocouple_rate_c_per_min, config.threshold_c, session_end)) {
     // Quiet candidates are consumed, not held until morning.
-    if (!clock_valid(utc) || (quiet && utc >= s_override_until)) s_result = "quiet";
+    if (!clock_valid(utc) || (quiet && utc >= s_override_until)) {
+      if (!s_pending) s_result = "quiet";
+    }
     else if (!s_pending) {
-      s_pending = true; s_test = false; s_created_ms = now_ms;
+      s_pending = true; s_kind = JOB_REFILL; s_created_ms = now_ms;
       ++s_generation; s_result = "pending";
     }
   }
@@ -57,11 +85,18 @@ void refill_notify_sample(const sensor_reading_t *reading) {
 
 void refill_notify_manual_event(const char *event) {
   if (strcmp(event, "added_wood") && strcmp(event, "cold_start") && strcmp(event, "stove_off")) return;
+  refill_settings_t config;
+  settings_get_refill(&config);
+  int64_t now_ms = esp_timer_get_time() / 1000;
   portENTER_CRITICAL(&s_lock);
-  refill_rule_reset(&s_rule);
-  s_pending = false;
-  ++s_generation;
+  update_config_locked(&config);
+  if (config.enabled) refill_rule_event(&s_rule, event, now_ms);
+  if (s_kind != JOB_HOT) {
+    s_pending = false;
+    ++s_generation;
+  }
   portEXIT_CRITICAL(&s_lock);
+  memset(&config, 0, sizeof config);
 }
 
 void refill_notify_send_pending(const settings_t *settings) {
@@ -70,15 +105,20 @@ void refill_notify_send_pending(const settings_t *settings) {
   int64_t now_ms = esp_timer_get_time() / 1000;
   sensor_reading_t reading;
   sensors_get_last_reading(&reading);
-  bool test;
+  notification_kind_t kind;
+  float hot_temperature;
   unsigned generation;
   portENTER_CRITICAL(&s_lock);
   if (!s_pending) { portEXIT_CRITICAL(&s_lock); return; }
-  test = s_test;
+  kind = s_kind;
+  hot_temperature = s_hot_temperature;
+  if (kind == JOB_HOT && !clock_valid(utc) && now_ms - s_created_ms <= 120000) {
+    portEXIT_CRITICAL(&s_lock); return;
+  }
   generation = s_generation;
   // Never deliver old/quiet/invalid-sensor candidates after a worker backlog.
   bool discard = memcmp(&settings->refill, &s_config, sizeof s_config) || !*settings->refill.url || !clock_valid(utc) || now_ms - s_created_ms > 120000 ||
-    (!test && (!settings->refill.enabled || (quiet && utc >= s_override_until) ||
+    (kind == JOB_REFILL && (!settings->refill.enabled || (quiet && utc >= s_override_until) ||
       !reading.thermocouple_ok || !thermocouple_reading_plausible(reading.thermocouple_c) ||
       reading.thermocouple_c > settings->refill.threshold_c || reading.thermocouple_rate_c_per_min > 0));
   s_pending = false;
@@ -86,8 +126,13 @@ void refill_notify_send_pending(const settings_t *settings) {
   portEXIT_CRITICAL(&s_lock);
   if (discard) return;
 
-  const char *body = test ? "Testmelding van je Flue Monitor." :
+  char hot_body[160];
+  snprintf(hot_body, sizeof hot_body,
+    "Temperatuurwaarschuwing: rookgastemperatuur %.1f °C gemeten (boven 200 °C). Controleer de kachel.", hot_temperature);
+  const char *body = kind == JOB_HOT ? hot_body : kind == JOB_TEST ? "Testmelding van je Flue Monitor." :
     "De kachel koelt af. Wil je doorstoken? Kijk of bijvullen nodig is.";
+  const char *title = kind == JOB_HOT ? "Flue Monitor - te heet" : kind == JOB_TEST ?
+    "Flue Monitor - test" : "Flue Monitor - bijvullen?";
   esp_http_client_config_t config = {
     .url = settings->refill.url, .method = HTTP_METHOD_POST,
     .timeout_ms = 10000, .buffer_size_tx = 1024, .disable_auto_redirect = true,
@@ -98,8 +143,8 @@ void refill_notify_send_pending(const settings_t *settings) {
   bool sent = false;
   if (client) {
     bool ready = esp_http_client_set_header(client, "Content-Type", "text/plain; charset=utf-8") == ESP_OK &&
-      esp_http_client_set_header(client, "Title", test ? "Flue Monitor - test" : "Flue Monitor - bijvullen?") == ESP_OK &&
-      esp_http_client_set_header(client, "Priority", "default") == ESP_OK;
+      esp_http_client_set_header(client, "Title", title) == ESP_OK &&
+      esp_http_client_set_header(client, "Priority", kind == JOB_HOT ? "high" : "default") == ESP_OK;
     char authorization[144];
     if (*settings->refill.token) {
       snprintf(authorization, sizeof authorization, "Bearer %s", settings->refill.token);
@@ -135,16 +180,19 @@ static esp_err_t status_handler(web_request_t *req) {
   settings_get_refill(&config);
   time_t utc = time(NULL);
   bool quiet = scheduled_quiet(&config, utc);
-  char json[192];
+  char json[256];
   portENTER_CRITICAL(&s_lock);
   int64_t override_until = s_override_until;
   bool armed = s_rule.armed;
+  bool active = s_rule.session_active;
+  bool waiting = s_rule.action_pending;
   const char *result = s_result;
+  const char *kind = s_kind == JOB_HOT ? "overheat" : s_kind == JOB_TEST ? "test" : "refill";
   int http_status = s_http_status;
   portEXIT_CRITICAL(&s_lock);
-  snprintf(json, sizeof json, "{\"quiet\":%s,\"override_until\":%lld,\"armed\":%s,\"result\":\"%s\",\"http_status\":%d}",
+  snprintf(json, sizeof json, "{\"quiet\":%s,\"override_until\":%lld,\"armed\":%s,\"session_active\":%s,\"waiting_for_response\":%s,\"result\":\"%s\",\"http_status\":%d,\"kind\":\"%s\"}",
     quiet && utc >= override_until ? "true" : "false", (long long)override_until,
-    armed ? "true" : "false", result, http_status);
+    armed ? "true" : "false", active ? "true" : "false", waiting ? "true" : "false", result, http_status, kind);
   memset(&config, 0, sizeof config);
   web_set_type(req, "application/json"); web_set_header(req, "Cache-Control", "no-store");
   return web_sendstr(req, json);
@@ -155,12 +203,7 @@ static esp_err_t action_handler(web_request_t *req) {
   if (!dashboard_auth_check_csrf(req)) return web_send_err(req, HTTPD_403_FORBIDDEN, "Invalid request origin");
   char body[3] = {0};
   if (req->content_len != 2) return web_send_err(req, HTTPD_400_BAD_REQUEST, "Expected an empty JSON object");
-  size_t got = 0;
-  while (got < 2) {
-    int n = web_recv(req, body + got, 2 - got);
-    if (n <= 0) return web_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
-    got += n;
-  }
+  if (!web_read_body(req, body, 2)) return web_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
   if (strcmp(body, "{}")) return web_send_err(req, HTTPD_400_BAD_REQUEST, "Expected an empty JSON object");
   refill_settings_t config;
   settings_get_refill(&config);
@@ -173,12 +216,14 @@ static esp_err_t action_handler(web_request_t *req) {
     until = refill_next_quiet_end(utc, config.quiet_end_min);
   }
   portENTER_CRITICAL(&s_lock);
-  if (memcmp(&config, &s_config, sizeof config)) {
-    s_config = config; refill_rule_reset(&s_rule); s_pending = false; s_override_until = 0;
-    ++s_generation;
+  update_config_locked(&config);
+  if (test && s_pending && s_kind == JOB_HOT) {
+    portEXIT_CRITICAL(&s_lock);
+    memset(&config, 0, sizeof config);
+    return web_send_err(req, HTTPD_400_BAD_REQUEST, "A temperature warning is pending. Try the test later.");
   }
   if (test) {
-    s_pending = true; s_test = true; s_created_ms = esp_timer_get_time() / 1000;
+    s_pending = true; s_kind = JOB_TEST; s_created_ms = esp_timer_get_time() / 1000;
     s_result = "pending"; ++s_generation;
   } else s_override_until = until;
   portEXIT_CRITICAL(&s_lock);

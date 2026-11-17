@@ -9,6 +9,10 @@ vm.runInContext(fs.readFileSync('main/web_ui/dashboard.js','utf8'),context);
  const posts=[];context.fetch=async(url,options)=>{if(options?.method==='POST')posts.push({url,body:JSON.parse(options.body)});return {ok:true,json:async()=>({result:'pending'})};};
  await app.refillAction('test');assert.equal(posts[0].url,'/api/refill/test');assert.deepEqual(posts[0].body,{});assert.match(app.toast,/Test queued/);assert.equal(app.refillBusy,false);
  app.settings={refill_enabled:true};app.refillStatus={quiet:true};assert.match(app.refillStatusText,/Quiet hours/);
+ app.refillStatus={result:'sending',kind:'overheat'};assert.match(app.refillStatusText,/high temperature/);
+ app.settings.refill_enabled=false;app.refillStatus={result:'sent',kind:'overheat',quiet:true};assert.match(app.refillStatusText,/accepted by ntfy/);
+ app.settings.refill_enabled=true;app.refillStatus={result:'idle',session_active:true,waiting_for_response:true};assert.match(app.refillStatusText,/20 °C rise/);
+ app.refillStatus={result:'idle',session_active:true};assert.match(app.refillStatusText,/Session active/);
  app.refillStatus={result:'failed'};assert.match(app.refillStatusText,/could not be sent/);
  context.fetch=async()=>({ok:false});await app.refillAction('quiet');assert.match(app.toast,/Could not update/);
  // Credential fields are forgotten after save; destination flags remain available.

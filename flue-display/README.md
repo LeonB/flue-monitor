@@ -15,7 +15,7 @@ Plain ESP-IDF firmware (not ESPHome/Arduino) for a **Lolin D32 Pro** driving a
   fallback setup access point, with a live test-connect-before-save flow;
   shared with `../flue-monitor/` (see the repo root `CLAUDE.md`'s "Shared
   components" section)
-- `main/ota_server.c/.h` — authenticated `POST /ota` endpoint for pushing
+- `../components/ota_server/` — authenticated `POST /ota` endpoint for pushing
   firmware updates over WiFi
 - `activate-idf.sh` — sources the cached ESP-IDF toolchain (see `CLAUDE.md`
   for why it's reused rather than freshly installed)
@@ -23,6 +23,8 @@ Plain ESP-IDF firmware (not ESPHome/Arduino) for a **Lolin D32 Pro** driving a
 - `partitions_ota.csv` — two-OTA-slot partition table
 
 ## Setup
+
+Both firmware projects use ESP-IDF **6.0.3** from the existing ESPHome SDK cache.
 
 ```sh
 . ./activate-idf.sh && idf.py build                       # build

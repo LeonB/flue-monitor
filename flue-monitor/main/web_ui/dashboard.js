@@ -364,13 +364,15 @@ function app() {
 
     get refillStatusText() {
       const s = this.refillStatus;
-      if (s.result === 'pending' || s.result === 'sending') return 'Sending notification…';
+      if (s.result === 'pending' || s.result === 'sending') return s.kind === 'overheat' ? 'Sending high temperature warning…' : 'Sending notification…';
       if (s.result === 'failed') return 'Last notification could not be sent. Check the destination and token.';
+      if (s.result === 'sent') return s.quiet ? 'Last notification accepted by ntfy. Refill reminders are paused for quiet hours.' : 'Last notification accepted by ntfy.';
       if (!this.settings.refill_enabled) return 'Refill reminders are off.';
       if (s.quiet) return 'Quiet hours: refill reminders are paused.';
       if (!s.result) return 'Notification status unavailable.';
-      if (s.result === 'sent') return 'Last notification accepted by ntfy.';
-      return s.armed ? 'Watching for cooling after the fire.' : 'Waiting for sustained warming.';
+      if (s.waiting_for_response) return 'Session active: waiting for a 20 °C rise after your action.';
+      if (s.armed) return 'Watching for cooling after the fire.';
+      return s.session_active ? 'Session active: waiting for a new warming cycle.' : 'Waiting for sustained warming or a logged start/refill.';
     },
 
     refillTime(minutes) {

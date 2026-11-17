@@ -3,15 +3,16 @@
 #include <stdint.h>
 
 typedef struct {
-  bool armed, sampled;
-  float peak;
-  int64_t last_ms, rising_since_ms, falling_since_ms;
+  bool armed, sampled, session_active, action_pending;
+  float peak, last_temperature, action_min;
+  int64_t last_ms, rising_since_ms, falling_since_ms, cold_since_ms, action_ms;
 } refill_rule_t;
 
 void refill_rule_reset(refill_rule_t *rule);
+void refill_rule_event(refill_rule_t *rule, const char *event, int64_t now_ms);
 // Called on real, fresh ten-second samples. Returns once per heat/cool cycle.
 bool refill_rule_sample(refill_rule_t *rule, int64_t now_ms, bool valid,
-                        float temperature, float rate, float threshold);
+                        float temperature, float rate, float threshold, float session_end);
 bool refill_quiet_minute(int minute, int start, int end);
 
 // Netherlands civil time (EU summer-time rule); input and expiry remain UTC.

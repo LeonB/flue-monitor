@@ -2,7 +2,7 @@
 import subprocess
 import tempfile
 from pathlib import Path
-from web_test_shim import native_source
+from web_test_shim import native_source, body_reader
 
 root = Path(__file__).resolve().parents[1]
 api = native_source((root / 'main/rest_api.c').read_text(), tunnel='false')
@@ -41,7 +41,8 @@ typedef int esp_err_t;
 #define pdMS_TO_TICKS(x) (x)
 typedef struct {const char *uri,*input;size_t content_len;int received,status;} httpd_req_t;
 static const char *TAG="test";
-static bool fail_alloc,fail_read,timeout_once;
+static bool fail_alloc,fail_read,timeout_once,timeout_always;
+static int fail_read_after=-1;
 static esp_err_t (*s_restore_history)(const char *,size_t);
 static esp_err_t (*s_export_history)(void *,size_t *);
 static unsigned boots,restores;
@@ -56,7 +57,9 @@ static void tracked_free(void *p) {if(p){assert(live_buffers);live_buffers--;fre
 static void *buffer_memory_calloc(size_t n,size_t size) {return tracked_alloc(n*size);}
 static void *buffer_memory_alloc(size_t size) {return tracked_alloc(size);}
 static int httpd_req_recv(httpd_req_t *r,char *out,int amount) {
- reads++;if(timeout_once){timeout_once=false;return HTTPD_SOCK_ERR_TIMEOUT;}
+ reads++;if(timeout_always)return HTTPD_SOCK_ERR_TIMEOUT;
+ if(fail_read_after>=0 && r->received>=fail_read_after)return -1;
+ if(timeout_once){timeout_once=false;return HTTPD_SOCK_ERR_TIMEOUT;}
  if(fail_read)return -1;
  if(amount>137)amount=137; // force fragmented reads
  assert((size_t)(r->received+amount)<=r->content_len);
@@ -107,7 +110,13 @@ int main(void) {
  httpd_req_t r={.uri="/api/auth/login",.input=login,.content_len=(int)strlen(login)};
  fail_alloc=true;auth_form_handler(&r);assert(r.status==500 && !reads && !logins && !live_buffers);
  fail_alloc=false;fail_read=true;auth_form_handler(&r);assert(r.status==400 && !live_buffers);
- fail_read=false;r.received=0;r.status=0;auth_form_handler(&r);assert(r.status==200 && logins==1 && !live_buffers);
+ fail_read=false;timeout_once=true;reads=0;r.received=0;r.status=0;
+ auth_form_handler(&r);assert(r.status==400 && reads==1 && !live_buffers);
+ char partial[300];memset(partial,'x',sizeof partial);
+ r=(httpd_req_t){.input=partial,.content_len=sizeof partial};fail_read_after=137;reads=0;
+ assert(!web_read_body(&r,partial,sizeof partial) && reads==2);fail_read_after=-1;
+ r=(httpd_req_t){.uri="/api/auth/login",.input=login,.content_len=strlen(login)};
+ auth_form_handler(&r);assert(r.status==200 && logins==1 && !live_buffers);
  for(int error=0;error<2;error++) {
   auth_result=error?ESP_FAIL:ESP_ERR_INVALID_STATE;
   r=(httpd_req_t){.uri="/api/auth/login",.input=login,.content_len=(int)strlen(login)};
@@ -127,6 +136,10 @@ int main(void) {
   if(mode==0)assert(r.status==200 && written==sizeof image && writes>2 && reboots==1 && !aborts);
   else {assert(r.status==500 && !reboots);if(mode==1)assert(!begins && !reads);if(mode==3 || mode==4)assert(aborts==1);}
  }
+ timeout_always=true;reads=aborts=reboots=0;written=0;fail_boot=false;
+ r=(httpd_req_t){.input=image,.content_len=sizeof image};ota_post_handler(&r);
+ assert(r.status==500 && reads==4 && aborts==1 && !reboots && !live_buffers);
+ timeout_always=false;
  puts("PASS OTA: exact fragmented image, timeout retry, allocation/begin/read/write/end/boot failures and complete cleanup");
  fail_alloc=fail_begin=fail_read=fail_write=fail_end=fail_boot=false;
  s_restore_history=restore_history;bad_secret=true;reads=0;
@@ -144,7 +157,7 @@ int main(void) {
 with tempfile.TemporaryDirectory() as directory:
     source = Path(directory) / 'http_test.c'
     binary = Path(directory) / 'http_test'
-    source.write_text(preamble + auth + export + restore + ota + tests)
+    source.write_text(preamble + body_reader() + auth + export + restore + ota + tests)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-Wno-deprecated-declarations',
                     '-fsanitize=address,undefined', '-I', str(cjson), str(source),
                     str(cjson / 'cJSON.c'), '-o', str(binary)], check=True)

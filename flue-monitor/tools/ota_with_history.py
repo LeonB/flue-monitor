@@ -123,33 +123,75 @@ def save_utc_history(path, backup):
     path.write_text(json.dumps(backup, indent=2, allow_nan=False) + '\n')
 
 
-def history_contains(before, after):
-    for age, temp, rate, zone in before['samples']:
-        epoch = before['saved_at'] - age
-        if any(abs(after['saved_at']-a-epoch) <= 2 and abs(t-temp) < .01 and
-               abs(r-rate) < .01 and z == zone for a, t, r, z in after['samples']):
+def compressed_history(samples):
+    """Replay sensors.c history_push, including float32 anchor comparisons.
+
+    Import replays already compressed samples; that operation can remove more
+    points. Keep this policy checked against the actual C implementation.
+    """
+    def f32(value):
+        return struct.unpack('<f', struct.pack('<f', value))[0]
+
+    def same_level(a, b):
+        return a[1] == b[1] and a[3] == b[3] and abs(f32(a[2]-b[2])) <= f32(.05)
+
+    retained = []
+    for epoch, temp, rate, zone in samples:
+        temp = f32(temp)
+        rounded = math.floor(temp + .5) if temp >= 0 else math.ceil(temp - .5)
+        point = (epoch, rounded, f32(rate), zone)
+        if len(retained) >= 2 and same_level(retained[-2], retained[-1]) and same_level(retained[-2], point):
+            retained[-1] = point
+        else:
+            retained.append(point)
+            retained = retained[-360:]
+    return retained
+
+
+def history_verification(before, after):
+    timeline = [(after['saved_at']-a, t, r, z) for a, t, r, z in after['samples']]
+    original = [(before['saved_at']-a, t, r, z) for a, t, r, z in before['samples']]
+
+    def present(point):
+        epoch, temp, rate, zone = point
+        return any(abs(t-epoch) <= 2 and abs(c-temp) < .01 and abs(r-rate) < .01 and z == zone
+                   for t, c, r, z in timeline)
+
+    exact = sum(present(point) for point in original)
+    evicted = sum(not present(point) and point[0] < timeline[0][0] - 2
+                  for point in original) if len(timeline) == 360 else 0
+    # Only readings newer than the saved timeline can extend a plateau or evict an
+    # old point. Missing old readings cannot justify their own disappearance.
+    fresh = [point for point in timeline if not original or point[0] > original[-1][0] + 2]
+    expected = compressed_history(original + fresh)
+    for point in expected:
+        if present(point):
             continue
-        timeline = [(after['saved_at']-a, t, r, z) for a, t, r, z in after['samples']]
-        if timeline and len(timeline) == 360 and epoch < timeline[0][0]:
+        if len(timeline) == 360 and point[0] < timeline[0][0] - 2:
             continue  # The bounded ring keeps the newest points.
-        # Stable-history compression can replace the old plateau tail with a
-        # newer endpoint; the original point must remain on the same plateau.
-        left = next((x for x in reversed(timeline) if x[0] <= epoch), None)
-        right = next((x for x in timeline if x[0] >= epoch), None)
-        if not (left and right and all(abs(x[1]-temp) < .01 and abs(x[2]-rate) <= .051 and x[3] == zone
-                                     for x in (left, right))):
-            return False
+        return None
     unmatched = list(after['events'])
+    events_evicted = 0
     for age, event in before['events']:
         epoch = before['saved_at'] - age
         match = next((i for i, (a, ev) in enumerate(unmatched)
                       if abs(after['saved_at']-a-epoch) <= 2 and ev == event), None)
         if match is None:
             if len(after['events']) == 64 and epoch < after['saved_at'] - after['events'][0][0]:
+                events_evicted += 1
                 continue
-            return False
+            return None
         unmatched.pop(match)
-    return True
+    retention = 'exact' if exact == len(original) else 'bounded_capacity' if evicted else 'compression_equivalent'
+    return {'sample_retention': retention,
+            'samples_before': len(original), 'samples_exactly_retained': exact,
+            'samples_evicted_by_capacity': evicted, 'samples_after': len(timeline),
+            'events_preserved': len(before['events']) - events_evicted,
+            'events_evicted_by_capacity': events_evicted}
+
+
+def history_contains(before, after):
+    return history_verification(before, after) is not None
 
 
 def flash_usb(port, expected_mac, image, out):
@@ -254,10 +296,10 @@ def update(project, host, image, without_history=False, usb_port=None, expected_
         current = stamp_history(request('/ota/history'))
     (out / 'history-after.bin').write_bytes(current)
     save_utc_history(out / 'history-after.json', history_to_utc(decode_history(current)))
-    if not history_contains(expected, decode_history(current)):
+    verification = history_verification(expected, decode_history(current))
+    if verification is None:
         raise RuntimeError(f'History verification failed; backup retained in {out}')
-    (out / 'verified.json').write_text(json.dumps({'samples_preserved': len(expected['samples']),
-                                                'events_preserved': len(expected['events'])}, indent=2) + '\n')
+    (out / 'verified.json').write_text(json.dumps(verification, indent=2) + '\n')
     print('Graph history verified after restart.', flush=True)
     return out
 

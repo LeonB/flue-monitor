@@ -118,11 +118,12 @@ static esp_err_t ota_post_handler(httpd_req_t *req) {
   }
 
   size_t remaining = req->content_len;
+  unsigned timeout_retries = 0; // Total budget, including across partial writes.
   while (remaining > 0) {
     size_t chunk = remaining < buffer_size ? remaining : buffer_size;
     int recv_len = httpd_req_recv(req, buf, chunk);
     if (recv_len <= 0) {
-      if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {
+      if (recv_len == HTTPD_SOCK_ERR_TIMEOUT && timeout_retries++ < 3) {
         continue;
       }
       ESP_LOGE(TAG, "httpd_req_recv failed: %d", recv_len);

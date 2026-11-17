@@ -232,6 +232,13 @@ device NTP changes do not alter the Mac backup. Raw `.bin` captures are retained
 alongside the JSON for diagnostics. The capture-time mapping has approximately
 one-second rounding plus network-delay uncertainty; it is not subsecond timing.
 
+Readback verification replays the firmware's anchored stable-run compression;
+reimporting compressed history can remove additional redundant points.
+`verified.json` distinguishes exact retention from compression-equivalent
+retention, reports the number of original points actually found, and identifies
+eviction by the fixed history/event capacity separately. Event multiplicity is
+checked. The original UTC backup is never rewritten to hide recompression.
+
 For an explicit image, or an update without a graph backup:
 
 ```sh
@@ -424,8 +431,18 @@ anyone who knows that topic can read/publish there.
 The live detector arms after at least 4 minutes rising at 2 °C/min or faster. It
 reminds once after at least 5 minutes falling, 20 °C below the observed peak and
 at/below the configured threshold (default 80 °C). Fresh warming rearms it;
-manual added_wood/cold_start/stove_off cancels pending reminders. Invalid sensor
-samples and gaps over 30 seconds reset detection. It starts fresh after reboot.
+Manual `added_wood` / `cold_start` cancels a pending refill reminder and starts
+an active refill session. A measured rise of at least 20 °C from the lowest
+reading since that action can arm the next reminder, even when the four-minute
+fast-warming condition was not met. An action alone never arms a reminder;
+`damper_up`, `damper_down` and opening the stove do not start/reset a cycle.
+`stove_off` ends the refill session and cancels pending refill work. Automatic
+sustained warming can start a new session later. Thirty minutes below the saved
+**Session ends below** temperature without sustained warming also ends a refill
+session. Each reminder consumes its warming evidence, so continued cooling does
+not repeat it. These actions do not change graph session framing.
+Invalid sensor samples and gaps over 30 seconds reset detection and manual
+warming evidence. It starts fresh after reboot.
 Default quiet hours are23:00–07:00 Netherlands time, with the current EU summer-
 time rule handled automatically. **Allow tonight** lasts until the next quiet
 end; it resets on reboot. Skipped reminders are never queued for morning.
@@ -445,7 +462,7 @@ consecutive readings show a rise of at least 2 °C/min over at least four minute
 Gaps over eight minutes do not establish sustained warming. A session ends after
 30 minutes below `burn_end_temperature_c` (default 60 °C), with sustained warming
 restarting that timer. This end threshold is editable under **Burn sessions** and
-must be below the cold-zone limit. It changes graph framing only. The graph follows
+must be below the cold-zone limit. It controls graph framing and when an inactive refill session expires. The graph follows
 through now; three hours after the observed session end it returns to the last
 three hours. Manual zoom remains available.
 

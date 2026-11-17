@@ -43,6 +43,9 @@ int web_req_to_sockfd(web_request_t *req);
 esp_err_t web_header(web_request_t *req, const char *name, char *out, size_t size);
 esp_err_t web_query(web_request_t *req, char *out, size_t size);
 int web_recv(web_request_t *req, char *out, size_t size);
+// Read a bounded application body. Any receive error (including timeout) ends
+// the request; callers retain their own size limits and credential cleanup.
+bool web_read_body(web_request_t *req, char *out, size_t size);
 esp_err_t web_set_header(web_request_t *req, const char *name, const char *value);
 esp_err_t web_set_type(web_request_t *req, const char *type);
 esp_err_t web_set_status(web_request_t *req, const char *status);
