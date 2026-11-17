@@ -4,6 +4,25 @@ Archived on 2026-11-17. These entries record past experiments and deployments;
 current operating guidance is in the parent CLAUDE.md. Later dated outcomes
 supersede older pending/deployment claims.
 
+## 2026-11-17 audit cleanup deployed
+
+Source commit c5b7ec02b9610f3377460ef97d966d77fa1c3e87 was pushed before OTA.
+Monitor image SHA256 3c89e0339a0e9c385d07c2f9a32430871b907ed0b6f8d23748786699e86fba4f,
+1,527,024 bytes with 8,976 bytes OTA headroom. IDF 6.0.3 build and targeted
+ASan/UBSan, migration/auth/HTTP2, graph/UI, history and compression checks passed.
+MAC 8c:94:df:0b:be:fc at .137 checked before one OTA upload; no USB opened.
+UTC backup/readback: .cache/ota-history/20261117T103015844628Z/.
+All 29 events retained exactly. Of 360 old samples, 359 matched exactly and
+one oldest point was evicted by normal capacity as fresh data arrived; do not
+claim all 360 exact points preserved. Full original UTC backup remains intact.
+Readback has 360 points. Redacted settings unchanged except boot revision.
+Final WS: v6.0.3, uptime159s, reset_reason3, valid thermocouple reading,
+four Cloudflare connections and one Sheets success. Authenticated Chrome
+session survived reboot; live room/outdoor/device signal and temperature shown.
+Display subsequently acknowledged revision2819683379 on its new IDF6.0.3 image.
+Frozen bin/ELF/map/config/build log and deployment evidence:
+.cache/audit-deploy/3c89e0339a0e9c38/. No synthetic event or test notification.
+
 # flue-monitor (plain ESP-IDF, not ESPHome/Arduino)
 
 

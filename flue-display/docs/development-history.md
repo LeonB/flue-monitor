@@ -4,6 +4,22 @@ Archived on 2026-11-17. These entries record past experiments and deployments;
 current operating guidance is in the parent CLAUDE.md. Later dated outcomes
 supersede older pending/deployment claims.
 
+## 2026-11-17 ESP-IDF 6.0.3 deployed
+
+Source commit c5b7ec02b9610f3377460ef97d966d77fa1c3e87 was pushed before OTA.
+Activation and manifest select SDK6.0.3; add managed cJSON and explicit
+esp_driver_gpio. Existing WebSocket-client1.8.0 and redirect workaround retained.
+Production FLU_DISPLAY_TEST_WS_URI empty. Image SHA256
+caaaf11b002942829a197bee9a1981116780df4410446fb1e3ea036726376ea1,
+1,136,800 bytes with 399,200 bytes OTA headroom. Build and host reconnect tests pass.
+MAC84:0d:8e:d2:a6:ec at .138 confirmed before exactly one OTA POST. Accepted
+OK,rebooting and normal /status404 after restart; no USB opened or NVS erased.
+Authenticated monitor settings/status returned revision2819683379 and
+display_applied:true. Live Chrome dashboard reports display RSSI around-42dBm
+and valid monitor data. This verifies reconnect and settings delivery, not
+physical LED colour or long-term electrical stability. Frozen bin/ELF/map/config,
+build log and deployment evidence: .cache/audit-deploy/caaaf11b00294282/.
+
 # flue-display (plain ESP-IDF, not ESPHome)
 
 ## 2026-10-30 receive buffer and connection recovery

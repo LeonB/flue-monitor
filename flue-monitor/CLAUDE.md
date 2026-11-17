@@ -14,7 +14,7 @@ environment. Do not modify the SDK or managed components directly. The checked
 IWDT transition patch is applied through CMake; its instruction ordering, IRAM
 and internal-memory requirements are deliberate. Watchdog tests are separate
 from normal builds; do not restart monitoring, run crash tests or flash hardware
-without authorization. Existing source-only audit changes are not deployed.
+without authorization. The 2026-11-17 cleanup is deployed; see development history for verification.
 
 Firmware must fit the existing 1,536,000-byte OTA slots. Ordinary application
 buffers and cJSON allocations are strict PSRAM on the monitor; no internal-RAM
