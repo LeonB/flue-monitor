@@ -14,6 +14,10 @@ Read each project's `CLAUDE.md` before working there. Day-to-day commands and
 API documentation are in its README. Both projects use **ESP-IDF 6.0.3**;
 source the project's `activate-idf.sh` in the same shell as `idf.py`.
 
+This is a personal project: use `leonbogaert@gmail.com` for Git author and
+committer email. Agent environments may override local Git configuration;
+set the author/committer environment explicitly and verify the resulting commit.
+
 ## Current behaviour
 
 Sensor samples arrive every ten seconds; rate uses a 150-second regression.
